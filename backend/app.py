@@ -1,13 +1,23 @@
-# app.py
-from flask import Flask, jsonify
-from flask_cors import CORS  # Reactからのアクセスを許可するために必要
+from flask import Flask
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 CORS(app)
+# SocketIOを初期化
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-@app.route('/api/hello', methods=['GET'])
-def hello():
-    return jsonify({"message": "Python(Flask)からこんにちは！"})
+@app.route('/')
+def index():
+    return "Socket.io Server is running"
+
+# クライアントからメッセージを受け取った時の処理
+@socketio.on('message')
+def handle_message(data):
+    print('received message: ' + data)
+    # 全員にメッセージを投げ返す（拡散）
+    emit('message', data, broadcast=True)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    # app.run ではなく socketio.run を使う
+    socketio.run(app, debug=True, port=5001)
