@@ -9,12 +9,20 @@ function App() {
   const [chatLog, setChatLog] = useState([]);
 
   useEffect(() => {
-    // サーバーからメッセージが届いた時の処理
-    socket.on('message', (msg) => {
-      setChatLog((prevLog) => [...prevLog, msg]);
-    });
+      // 1. 過去の履歴をAPIから取得
+      fetch('http://127.0.0.1:5001/api/messages')
+        .then(res => res.json())
+        .then(data => {
+          const history = data.map(m => m.text);
+          setChatLog(history);
+        });
 
-    return () => socket.off('message');
+      // 2. Socket.ioの設定（既存のまま）
+      socket.on('message', (msg) => {
+        setChatLog((prevLog) => [...prevLog, msg]);
+      });
+
+      return () => socket.off('message');
   }, []);
 
   const sendMessage = () => {
