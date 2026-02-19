@@ -1,51 +1,41 @@
-import React, { useState, useEffect } from 'react';
-import io from 'socket.io-client';
-
-// サーバーのURL（Python側）
-const socket = io('http://127.0.0.1:5001');
+import { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
+import Auth from './Auth';
+import Chat from './Chat'; 
 
 function App() {
-  const [message, setMessage] = useState('');
-  const [chatLog, setChatLog] = useState([]);
+  const [session, setSession] = useState(null);
 
   useEffect(() => {
-      // 1. 過去の履歴をAPIから取得
-      fetch('http://127.0.0.1:5001/api/messages')
-        .then(res => res.json())
-        .then(data => {
-          const history = data.map(m => m.text);
-          setChatLog(history);
-        });
+    // 現在のログイン状態を取得
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+    // ログイン状態の変化を監視（ログイン・ログアウト時に自動で動く）
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
 
-      // 2. Socket.ioの設定（既存のまま）
-      socket.on('message', (msg) => {
-        setChatLog((prevLog) => [...prevLog, msg]);
-      });
-
-      return () => socket.off('message');
+    return () => subscription.unsubscribe();
   }, []);
 
-  const sendMessage = () => {
-    if (message !== "") {
-      socket.emit('message', message);
-      setMessage(""); // 送信後に空にする
-    }
-  };
+  // ログアウト処理
+  const handleLogout = () => supabase.auth.signOut();
 
   return (
-    <div style={{ padding: '20px' }}>
-      <h1>リアルタイムチャット</h1>
-      <div style={{ border: '1px solid #ccc', height: '200px', overflowY: 'scroll', marginBottom: '10px' }}>
-        {chatLog.map((msg, index) => (
-          <p key={index}>{msg}</p>
-        ))}
-      </div>
-      <input 
-        value={message} 
-        onChange={(e) => setMessage(e.target.value)} 
-        placeholder="メッセージを入力"
-      />
-      <button onClick={sendMessage}>送信</button>
+    <div className="App" style={{ padding: '20px' }}>
+      {!session ? (
+        <Auth />
+      ) : (
+        <div>
+          <header style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <span>ようこそ、<strong>{session.user.email}</strong> さん</span>
+            <button onClick={handleLogout}>ログアウト</button>
+          </header>
+          
+          <Chat session={session} /> {/* ここでChatを呼び出し、セッションを渡す */}
+        </div>
+      )}
     </div>
   );
 }
