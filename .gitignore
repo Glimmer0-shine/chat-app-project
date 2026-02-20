@@ -7,6 +7,9 @@ backend/.env
 # React (frontend)
 frontend/node_modules/
 frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/src/supabaseClient.js
 
 # OS generated files
 .DS_Store
