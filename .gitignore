@@ -13,3 +13,6 @@ frontend/src/supabaseClient.js
 
 # OS generated files
 .DS_Store
+
+# text files
+Geminiログ.pages
