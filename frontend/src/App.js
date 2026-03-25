@@ -8,13 +8,17 @@ function App() {
 
   useEffect(() => {
     // 現在のログイン状態を取得
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
-    });
+    };
+
+    getSession();
     // ログイン状態の変化を監視（ログイン・ログアウト時に自動で動く）
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
+    const { data: { subscription } } =
+      supabase.auth.onAuthStateChange((_event, session) => {
+        setSession(session);
+      });
 
     return () => subscription.unsubscribe();
   }, []);
