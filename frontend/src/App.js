@@ -2,19 +2,35 @@ import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import Chat from './Chat'; 
+import Friends from './Friends';
+import Profile from './Profile';
 
 function App() {
   const [session, setSession] = useState(null);
+  const [activeTab, setActiveTab] = useState('friends');
+  const [currentChatFriend, setCurrentChatFriend] = useState(null);
+  const [showProfile, setShowProfile] = useState(false);
+
+  // ★ 追加: タブのスタイルを計算する関数
+  const tabStyle = (isActive) => ({
+    flex: 1,
+    padding: '12px',
+    cursor: 'pointer',
+    backgroundColor: isActive ? '#007bff' : '#f0f0f0',
+    color: isActive ? 'white' : 'black',
+    border: 'none',
+    borderRadius: '5px',
+    transition: '0.3s',
+    fontWeight: isActive ? 'bold' : 'normal'
+  });
 
   useEffect(() => {
-    // 現在のログイン状態を取得
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
     };
-
     getSession();
-    // ログイン状態の変化を監視（ログイン・ログアウト時に自動で動く）
+
     const { data: { subscription } } =
       supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
@@ -23,21 +39,57 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ログアウト処理
+  const handleStartChat = (friendEmail) => {
+    setCurrentChatFriend(friendEmail);
+    setActiveTab('chat');
+    setShowProfile(false); // トーク開始時はプロフィールを閉じる
+  };
+
   const handleLogout = () => supabase.auth.signOut();
 
   return (
-    <div className="App" style={{ padding: '20px' }}>
+    <div className="App" style={{ maxWidth: '600px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif' }}>
       {!session ? (
         <Auth />
       ) : (
         <div>
-          <header style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-            <span>ようこそ、<strong>{session.user.email}</strong> さん</span>
-            <button onClick={handleLogout}>ログアウト</button>
+          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <span style={{ fontSize: '0.9rem' }}>👤 <strong>{session.user.email}</strong></span>
+            <button onClick={handleLogout} style={{ padding: '5px 10px' }}>ログアウト</button>
           </header>
-          
-          <Chat session={session} /> {/* ここでChatを呼び出し、セッションを渡す */}
+
+          {/* タブメニュー */}
+          <nav style={{ display: 'flex', gap: '5px', marginBottom: '20px' }}>
+            <button 
+              onClick={() => { setActiveTab('friends'); setShowProfile(false); }} 
+              style={tabStyle(activeTab === 'friends' && !showProfile)}
+            >
+              連絡帳
+            </button>
+            <button 
+              onClick={() => { setActiveTab('chat'); setShowProfile(false); }} 
+              style={tabStyle(activeTab === 'chat' && !showProfile)}
+            >
+              トーク
+            </button>
+          </nav>
+
+          {/* 表示するコンテンツの切り替え */}
+          <div style={{ border: '1px solid #eee', borderRadius: '10px', padding: '10px', minHeight: '450px', backgroundColor: '#fff' }}>
+            {showProfile ? (
+              <Profile session={session} onBack={() => setShowProfile(false)} />
+            ) : (
+              activeTab === 'friends' ? (
+                <Friends 
+                  session={session} 
+                  onStartChat={handleStartChat} 
+                  onOpenSettings={() => setShowProfile(true)} 
+                />
+              ) : (
+                <Chat session={session} friendEmail={currentChatFriend} />
+              )
+            )}
+          </div>
         </div>
       )}
     </div>
