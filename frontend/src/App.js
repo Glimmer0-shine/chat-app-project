@@ -4,6 +4,7 @@ import Auth from './Auth';
 import Chat from './Chat'; 
 import Friends from './Friends';
 import Profile from './Profile';
+import Rooms from './Rooms';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -86,7 +87,20 @@ function App() {
                   onOpenSettings={() => setShowProfile(true)} 
                 />
               ) : (
-                <Chat session={session} friendEmail={currentChatFriend} />
+                // ★ ここを修正：相手を選んでいれば Chat、選んでいなければ Rooms を表示
+                currentChatFriend ? (
+                  <div style={{ position: 'relative' }}>
+                    <button 
+                      onClick={() => setCurrentChatFriend(null)} 
+                      style={{ marginBottom: '10px', background: 'none', border: 'none', color: '#007bff', cursor: 'pointer' }}
+                    >
+                      ← 一覧に戻る
+                    </button>
+                    <Chat session={session} friendEmail={currentChatFriend} />
+                  </div>
+                ) : (
+                  <Rooms session={session} onSelectRoom={(email) => setCurrentChatFriend(email)} />
+                )
               )
             )}
           </div>
