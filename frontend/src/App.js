@@ -5,12 +5,14 @@ import Chat from './Chat';
 import Friends from './Friends';
 import Profile from './Profile';
 import Rooms from './Rooms';
+import SharedFolder from './SharedFolder';
 
 function App() {
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState('friends');
   const [currentChatFriend, setCurrentChatFriend] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
+  const [subTab, setSubTab] = useState('chat'); // 'chat' または 'album'
 
   // ★ 追加: タブのスタイルを計算する関数
   const tabStyle = (isActive) => ({
@@ -43,6 +45,7 @@ function App() {
   const handleStartChat = (friendEmail) => {
     setCurrentChatFriend(friendEmail);
     setActiveTab('chat');
+    setSubTab('chat'); // 追加
     setShowProfile(false); // トーク開始時はプロフィールを閉じる
   };
 
@@ -87,16 +90,53 @@ function App() {
                   onOpenSettings={() => setShowProfile(true)} 
                 />
               ) : (
-                // ★ ここを修正：相手を選んでいれば Chat、選んでいなければ Rooms を表示
                 currentChatFriend ? (
-                  <div style={{ position: 'relative' }}>
-                    <button 
-                      onClick={() => setCurrentChatFriend(null)} 
-                      style={{ marginBottom: '10px', background: 'none', border: 'none', color: '#007bff', cursor: 'pointer' }}
-                    >
-                      ← 一覧に戻る
-                    </button>
-                    <Chat session={session} friendEmail={currentChatFriend} />
+                  <div>
+                    {/* サブメニューヘッダー */}
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>
+                      <button 
+                        onClick={() => setCurrentChatFriend(null)} 
+                        style={{ background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', marginRight: '10px' }}
+                      >
+                        ← 戻る
+                      </button>
+                      <div style={{ flex: 1, textAlign: 'center', fontWeight: 'bold' }}>{currentChatFriend}</div>
+                    </div>
+
+                    {/* チャット・アルバムの切り替えタブ */}
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+                      <button 
+                        onClick={() => setSubTab('chat')}
+                        style={{ 
+                          flex: 1, padding: '8px', cursor: 'pointer',
+                          border: 'none', borderRadius: '20px',
+                          backgroundColor: subTab === 'chat' ? '#e7f3ff' : 'transparent',
+                          color: subTab === 'chat' ? '#007bff' : '#666',
+                          fontWeight: subTab === 'chat' ? 'bold' : 'normal'
+                        }}
+                      >
+                        💬 トーク
+                      </button>
+                      <button 
+                        onClick={() => setSubTab('album')}
+                        style={{ 
+                          flex: 1, padding: '8px', cursor: 'pointer',
+                          border: 'none', borderRadius: '20px',
+                          backgroundColor: subTab === 'album' ? '#e7f3ff' : 'transparent',
+                          color: subTab === 'album' ? '#007bff' : '#666',
+                          fontWeight: subTab === 'album' ? 'bold' : 'normal'
+                        }}
+                      >
+                        🖼️ アルバム
+                      </button>
+                    </div>
+
+                    {/* コンテンツ表示 */}
+                    {subTab === 'chat' ? (
+                      <Chat session={session} friendEmail={currentChatFriend} />
+                    ) : (
+                      <SharedFolder session={session} friendEmail={currentChatFriend} />
+                    )}
                   </div>
                 ) : (
                   <Rooms session={session} onSelectRoom={(email) => setCurrentChatFriend(email)} />
