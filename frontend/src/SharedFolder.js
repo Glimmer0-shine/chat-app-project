@@ -42,6 +42,7 @@ const SharedFolder = ({ session, friendEmail }) => {
         room_id: chatRoomId,
         user: session.user.email,
         text: text,
+        is_system: true, // ★システムメッセージとして保存
       },
     ]);
   };
@@ -63,7 +64,7 @@ const SharedFolder = ({ session, friendEmail }) => {
       if (uploadError) throw uploadError;
 
       // ★追加：通知メッセージの投稿
-      await sendSystemMessage("📷 アルバムに新しい写真を追加しました");
+      await sendSystemMessage("📷 アルバムに新しい写真が追加されました");
 
       fetchImages();
     } catch (error) {
@@ -91,7 +92,7 @@ const SharedFolder = ({ session, friendEmail }) => {
       // dataが空配列で返ってくる場合は削除失敗（ファイルが見つからない等）
       if (data && data.length > 0) {
         console.log("★削除成功:", data);
-        await sendSystemMessage(`🗑️ 写真を削除しました`);
+        await sendSystemMessage(`🗑️ 写真が削除されました`);
         fetchImages();
       } else {
         console.warn("★削除対象が見つかりませんでした");
