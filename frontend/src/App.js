@@ -6,6 +6,7 @@ import Friends from './Friends';
 import Profile from './Profile';
 import Rooms from './Rooms';
 import SharedFolder from './SharedFolder';
+import SharedDocuments from './SharedDocuments';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -129,14 +130,24 @@ function App() {
                       >
                         🖼️ アルバム
                       </button>
+                      <button 
+                        onClick={() => setSubTab('files')}
+                        style={{ 
+                          flex: 1, padding: '8px', cursor: 'pointer',
+                          border: 'none', borderRadius: '20px',
+                          backgroundColor: subTab === 'album' ? '#e7f3ff' : 'transparent',
+                          color: subTab === 'album' ? '#007bff' : '#666',
+                          fontWeight: subTab === 'album' ? 'bold' : 'normal'
+                        }}
+                      >
+                        📁 ファイル
+                      </button>
                     </div>
 
                     {/* コンテンツ表示 */}
-                    {subTab === 'chat' ? (
-                      <Chat session={session} friendEmail={currentChatFriend} />
-                    ) : (
-                      <SharedFolder session={session} friendEmail={currentChatFriend} />
-                    )}
+                    {subTab === 'chat' && <Chat session={session} friendEmail={currentChatFriend} />}
+                    {subTab === 'album' && <SharedFolder session={session} friendEmail={currentChatFriend} />}
+                    {subTab === 'files' && <SharedDocuments session={session} friendEmail={currentChatFriend} />}
                   </div>
                 ) : (
                   <Rooms session={session} onSelectRoom={(email) => setCurrentChatFriend(email)} />
