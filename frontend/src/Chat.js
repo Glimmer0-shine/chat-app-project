@@ -79,14 +79,43 @@ const Chat = ({ session, friendEmail }) => {
         対話中: {friendEmail}
       </div>
       <div style={{ height: '350px', overflowY: 'scroll', backgroundColor: '#f9f9f9', padding: '10px' }}>
-        {chatLog.map((msg, i) => (
-          <div key={msg.id || i} style={{ textAlign: msg.user === session.user.email ? 'right' : 'left', marginBottom: '10px' }}>
-            <div style={{ fontSize: '0.7rem', color: '#888' }}>{msg.user}</div>
-            <div style={{ display: 'inline-block', padding: '8px 12px', borderRadius: '10px', backgroundColor: msg.user === session.user.email ? '#007bff' : '#eee', color: msg.user === session.user.email ? 'white' : 'black' }}>
-              {msg.text}
+        {chatLog.map((msg, i) => {
+          // --- ここから追加 ---
+          // 1. まずシステムメッセージ（通知）かどうかを判定
+          if (msg.is_system) {
+            return (
+              <div key={msg.id || i} style={{ textAlign: 'center', margin: '15px 0' }}>
+                <span style={{ 
+                  backgroundColor: '#e0e0e0', 
+                  color: '#666', 
+                  padding: '4px 15px', 
+                  borderRadius: '20px', 
+                  fontSize: '0.75rem',
+                  display: 'inline-block'
+                }}>
+                  {msg.text}
+                </span>
+              </div>
+            );
+          }
+          // --- ここまで追加 ---
+
+          // 2. システムメッセージでない場合は、通常のメッセージ（自分 or 相手）を表示
+          return (
+            <div key={msg.id || i} style={{ textAlign: msg.user === session.user.email ? 'right' : 'left', marginBottom: '10px' }}>
+              <div style={{ fontSize: '0.7rem', color: '#888' }}>{msg.user}</div>
+              <div style={{ 
+                display: 'inline-block', 
+                padding: '8px 12px', 
+                borderRadius: '10px', 
+                backgroundColor: msg.user === session.user.email ? '#007bff' : '#eee', 
+                color: msg.user === session.user.email ? 'white' : 'black' 
+              }}>
+                {msg.text}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div style={{ display: 'flex', marginTop: '10px' }}>
         <input
@@ -94,7 +123,6 @@ const Chat = ({ session, friendEmail }) => {
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => {
-            // 【課題解決】IME（日本語入力）の変換確定中なら送信しない
             if (e.nativeEvent.isComposing) return;
             if (e.key === 'Enter') {
               sendMessage();
