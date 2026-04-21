@@ -14,6 +14,7 @@ function App() {
   const [currentChatFriend, setCurrentChatFriend] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
   const [subTab, setSubTab] = useState('chat'); // 'chat' または 'album'
+  const [myDisplayName, setMyDisplayName] = useState('');
 
   // ★ 追加: タブのスタイルを計算する関数
   const tabStyle = (isActive) => ({
@@ -43,6 +44,21 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ★追加: 自分のプロフィール（ニックネーム）を取得するuseEffect
+  useEffect(() => {
+    if (session?.user) {
+      const fetchMyProfile = async () => {
+        const { data } = await supabase
+          .from('profiles')
+          .select('display_name')
+          .eq('id', session.user.id)
+          .single();
+        if (data) setMyDisplayName(data.display_name || '');
+      };
+      fetchMyProfile();
+    }
+  }, [session, showProfile]);
+
   const handleStartChat = (friendEmail) => {
     setCurrentChatFriend(friendEmail);
     setActiveTab('chat');
@@ -59,7 +75,7 @@ function App() {
       ) : (
         <div>
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <span style={{ fontSize: '0.9rem' }}>👤 <strong>{session.user.email}</strong></span>
+            <span style={{ fontSize: '0.9rem' }}>👤 <strong>{myDisplayName || session.user.email}</strong></span>
             <button onClick={handleLogout} style={{ padding: '5px 10px' }}>ログアウト</button>
           </header>
 
@@ -101,7 +117,6 @@ function App() {
                       >
                         ← 戻る
                       </button>
-                      <div style={{ flex: 1, textAlign: 'center', fontWeight: 'bold' }}>{currentChatFriend}</div>
                     </div>
 
                     {/* チャット・アルバムの切り替えタブ */}
@@ -135,9 +150,9 @@ function App() {
                         style={{ 
                           flex: 1, padding: '8px', cursor: 'pointer',
                           border: 'none', borderRadius: '20px',
-                          backgroundColor: subTab === 'album' ? '#e7f3ff' : 'transparent',
-                          color: subTab === 'album' ? '#007bff' : '#666',
-                          fontWeight: subTab === 'album' ? 'bold' : 'normal'
+                          backgroundColor: subTab === 'files' ? '#e7f3ff' : 'transparent',
+                          color: subTab === 'files' ? '#007bff' : '#666',
+                          fontWeight: subTab === 'files' ? 'bold' : 'normal'
                         }}
                       >
                         📁 ファイル

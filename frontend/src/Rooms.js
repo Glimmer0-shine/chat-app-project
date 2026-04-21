@@ -7,9 +7,9 @@ const Rooms = ({ session, onSelectRoom }) => {
 
   useEffect(() => {
     const fetchRooms = async () => {
+      if (!session?.user?.email) return;
       setLoading(true);
       
-      // 1. 自分が関わっているメッセージをすべて取得（本当はもっと効率的なSQLがありますが、まずはJSで処理）
       const { data, error } = await supabase
         .from('messages')
         .select('room_id, created_at, user, text')
@@ -19,27 +19,63 @@ const Rooms = ({ session, onSelectRoom }) => {
       if (error) {
         console.error("ルーム取得エラー:", error);
       } else {
-        // 2. room_id ごとに最新のメッセージだけを抽出して整理
-        const latestRooms = [];
+        const latestRoomsData = [];
         const seenRooms = new Set();
+        const myEmail = session.user.email.toLowerCase();
 
         data?.forEach(msg => {
           if (msg.room_id && msg.room_id !== 'public' && !seenRooms.has(msg.room_id)) {
             seenRooms.add(msg.room_id);
             
-            // room_id (emailA-emailB) から相手のメアドを特定
-            const emails = msg.room_id.split('-');
-            const opponent = emails.find(e => e !== session.user.email);
+            // 相手特定アルゴリズム
+            // ルームID（例: "a@ex.com-b@ex.com"）から、自分のメアド部分を消して
+            // 残ったハイフンを掃除することで、相手を特定する。
             
-            latestRooms.push({
-              roomId: msg.room_id,
-              opponent: opponent,
-              lastMessage: msg.text,
-              time: new Date(msg.created_at).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-            });
+            let opponentEmail = "";
+            const roomIdLower = msg.room_id.toLowerCase();
+            
+            if (roomIdLower.includes(myEmail)) {
+              // 自分のメアド部分を空文字に置換し、残ったハイフンを削る
+              opponentEmail = roomIdLower.replace(myEmail, "").replace("-", "");
+            }
+
+            // 【デバッグログ】
+            // console.log("解析結果:", { 
+            //   roomId: msg.room_id, 
+            //   me: myEmail, 
+            //   opponent: opponentEmail 
+            // });
+
+            if (opponentEmail && opponentEmail !== myEmail) {
+              latestRoomsData.push({
+                roomId: msg.room_id,
+                opponentEmail: opponentEmail,
+                lastMessage: msg.text,
+                time: new Date(msg.created_at).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+              });
+            } else {
+              console.warn("有効な相手が見つかりませんでした:", msg.room_id);
+            }
           }
         });
-        setRooms(latestRooms);
+
+        // ニックネーム取得
+        const opponentEmails = latestRoomsData.map(r => r.opponentEmail);
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('email, display_name')
+          .in('email', opponentEmails);
+
+        // 合体
+        const finalRooms = latestRoomsData.map(room => {
+          const profile = profiles?.find(p => p.email.toLowerCase() === room.opponentEmail.toLowerCase());
+          return {
+            ...room,
+            opponentName: profile?.display_name || room.opponentEmail
+          };
+        });
+
+        setRooms(finalRooms);
       }
       setLoading(false);
     };
@@ -49,28 +85,25 @@ const Rooms = ({ session, onSelectRoom }) => {
 
   if (loading) return <p style={{ textAlign: 'center' }}>トーク履歴を読み込み中...</p>;
 
+
   return (
     <div style={{ padding: '10px' }}>
-      <h3 style={{ borderBottom: '2px solid #007bff', paddingBottom: '10px' }}>💬 トーク一覧</h3>
+      <h3 style={{ borderBottom: '2px solid #007bff', paddingBottom: '10px', marginBottom: '15px' }}>💬 トーク一覧</h3>
       {rooms.length === 0 ? (
-        <p style={{ color: '#888', textAlign: 'center', marginTop: '20px' }}>
-          まだトーク履歴がありません。<br/>「連絡帳」から友達を選んでメッセージを送ってみましょう！
-        </p>
+        <p style={{ color: '#888', textAlign: 'center', marginTop: '20px' }}>トーク履歴はありません。</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {rooms.map((room) => (
             <li 
               key={room.roomId} 
-              onClick={() => onSelectRoom(room.opponent)}
+              onClick={() => onSelectRoom(room.opponentEmail)}
               style={{ 
                 padding: '15px', borderBottom: '1px solid #eee', cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', gap: '5px'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 'bold' }}>{room.opponent}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 'bold' }}>{room.opponentName}</span>
                 <span style={{ fontSize: '0.8rem', color: '#999' }}>{room.time}</span>
               </div>
               <div style={{ fontSize: '0.9rem', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
