@@ -5,28 +5,27 @@ import Chat from './Chat';
 import Friends from './Friends';
 import Profile from './Profile';
 import Rooms from './Rooms';
-import SharedFolder from './SharedFolder';
-import SharedDocuments from './SharedDocuments';
 
 function App() {
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState('friends');
   const [currentChatFriend, setCurrentChatFriend] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
-  const [subTab, setSubTab] = useState('chat'); // 'chat' または 'album'
   const [myDisplayName, setMyDisplayName] = useState('');
 
-  // ★ 追加: タブのスタイルを計算する関数
-  const tabStyle = (isActive) => ({
+  // 下部タブのスタイル
+  const footerTabStyle = (isActive) => ({
     flex: 1,
-    padding: '12px',
+    padding: '12px 0',
     cursor: 'pointer',
-    backgroundColor: isActive ? '#007bff' : '#f0f0f0',
-    color: isActive ? 'white' : 'black',
+    backgroundColor: 'transparent',
+    color: isActive ? '#007bff' : '#888',
     border: 'none',
-    borderRadius: '5px',
-    transition: '0.3s',
-    fontWeight: isActive ? 'bold' : 'normal'
+    fontWeight: isActive ? 'bold' : 'normal',
+    fontSize: '0.9rem',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center'
   });
 
   useEffect(() => {
@@ -44,7 +43,6 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ★追加: 自分のプロフィール（ニックネーム）を取得するuseEffect
   useEffect(() => {
     if (session?.user) {
       const fetchMyProfile = async () => {
@@ -61,116 +59,66 @@ function App() {
 
   const handleStartChat = (friendEmail) => {
     setCurrentChatFriend(friendEmail);
-    setActiveTab('chat');
-    setSubTab('chat'); // 追加
-    setShowProfile(false); // トーク開始時はプロフィールを閉じる
+    setShowProfile(false);
   };
 
   const handleLogout = () => supabase.auth.signOut();
 
+  if (!session) return <Auth />;
+
   return (
-    <div className="App" style={{ maxWidth: '600px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif' }}>
-      {!session ? (
-        <Auth />
-      ) : (
-        <div>
-          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+    <div style={{ maxWidth: '600px', margin: '0 auto', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f5f5f5' }}>
+      
+      {/* 1. コンテンツ表示エリア (チャット中ならここが全画面) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#fff' }}>
+        
+        {/* チャット中でない場合のみ上部ヘッダーを表示 */}
+        {!currentChatFriend && !showProfile && (
+          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 20px', borderBottom: '1px solid #eee' }}>
             <span style={{ fontSize: '0.9rem' }}>👤 <strong>{myDisplayName || session.user.email}</strong></span>
-            <button onClick={handleLogout} style={{ padding: '5px 10px' }}>ログアウト</button>
+            <button onClick={handleLogout} style={{ padding: '5px 10px', fontSize: '0.8rem' }}>ログアウト</button>
           </header>
+        )}
 
-          {/* タブメニュー */}
-          <nav style={{ display: 'flex', gap: '5px', marginBottom: '20px' }}>
-            <button 
-              onClick={() => { setActiveTab('friends'); setShowProfile(false); }} 
-              style={tabStyle(activeTab === 'friends' && !showProfile)}
-            >
-              連絡帳
-            </button>
-            <button 
-              onClick={() => { setActiveTab('chat'); setShowProfile(false); }} 
-              style={tabStyle(activeTab === 'chat' && !showProfile)}
-            >
-              トーク
-            </button>
-          </nav>
-
-          {/* 表示するコンテンツの切り替え */}
-          <div style={{ border: '1px solid #eee', borderRadius: '10px', padding: '10px', minHeight: '450px', backgroundColor: '#fff' }}>
-            {showProfile ? (
-              <Profile session={session} onBack={() => setShowProfile(false)} />
-            ) : (
-              activeTab === 'friends' ? (
-                <Friends 
-                  session={session} 
-                  onStartChat={handleStartChat} 
-                  onOpenSettings={() => setShowProfile(true)} 
-                />
-              ) : (
-                currentChatFriend ? (
-                  <div>
-                    {/* サブメニューヘッダー */}
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #ddd', paddingBottom: '5px' }}>
-                      <button 
-                        onClick={() => setCurrentChatFriend(null)} 
-                        style={{ background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', marginRight: '10px' }}
-                      >
-                        ← 戻る
-                      </button>
-                    </div>
-
-                    {/* チャット・アルバムの切り替えタブ */}
-                    <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                      <button 
-                        onClick={() => setSubTab('chat')}
-                        style={{ 
-                          flex: 1, padding: '8px', cursor: 'pointer',
-                          border: 'none', borderRadius: '20px',
-                          backgroundColor: subTab === 'chat' ? '#e7f3ff' : 'transparent',
-                          color: subTab === 'chat' ? '#007bff' : '#666',
-                          fontWeight: subTab === 'chat' ? 'bold' : 'normal'
-                        }}
-                      >
-                        💬 トーク
-                      </button>
-                      <button 
-                        onClick={() => setSubTab('album')}
-                        style={{ 
-                          flex: 1, padding: '8px', cursor: 'pointer',
-                          border: 'none', borderRadius: '20px',
-                          backgroundColor: subTab === 'album' ? '#e7f3ff' : 'transparent',
-                          color: subTab === 'album' ? '#007bff' : '#666',
-                          fontWeight: subTab === 'album' ? 'bold' : 'normal'
-                        }}
-                      >
-                        🖼️ アルバム
-                      </button>
-                      <button 
-                        onClick={() => setSubTab('files')}
-                        style={{ 
-                          flex: 1, padding: '8px', cursor: 'pointer',
-                          border: 'none', borderRadius: '20px',
-                          backgroundColor: subTab === 'files' ? '#e7f3ff' : 'transparent',
-                          color: subTab === 'files' ? '#007bff' : '#666',
-                          fontWeight: subTab === 'files' ? 'bold' : 'normal'
-                        }}
-                      >
-                        📁 ファイル
-                      </button>
-                    </div>
-
-                    {/* コンテンツ表示 */}
-                    {subTab === 'chat' && <Chat session={session} friendEmail={currentChatFriend} />}
-                    {subTab === 'album' && <SharedFolder session={session} friendEmail={currentChatFriend} />}
-                    {subTab === 'files' && <SharedDocuments session={session} friendEmail={currentChatFriend} />}
-                  </div>
-                ) : (
-                  <Rooms session={session} onSelectRoom={(email) => setCurrentChatFriend(email)} />
-                )
-              )
-            )}
-          </div>
+        {/* メイン表示切り替え */}
+        <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
+          {showProfile ? (
+            <Profile session={session} onBack={() => setShowProfile(false)} />
+          ) : currentChatFriend ? (
+            <Chat 
+              session={session} 
+              friendEmail={currentChatFriend} 
+              onBack={() => setCurrentChatFriend(null)} 
+            />
+          ) : activeTab === 'friends' ? (
+            <Friends 
+              session={session} 
+              onStartChat={handleStartChat} 
+              onOpenSettings={() => setShowProfile(true)} 
+            />
+          ) : (
+            <Rooms session={session} onSelectRoom={handleStartChat} />
+          )}
         </div>
+      </div>
+
+      {/* 2. 下部メインタブ (個別チャット中・プロフィール編集中は非表示) */}
+      {!currentChatFriend && !showProfile && (
+        <footer style={{ 
+          display: 'flex', 
+          borderTop: '1px solid #eee', 
+          backgroundColor: '#fff', 
+          paddingBottom: 'env(safe-area-inset-bottom)' 
+        }}>
+          <button onClick={() => setActiveTab('friends')} style={footerTabStyle(activeTab === 'friends')}>
+            <span style={{ fontSize: '1.2rem' }}>👥</span>
+            連絡帳
+          </button>
+          <button onClick={() => setActiveTab('rooms')} style={footerTabStyle(activeTab === 'rooms')}>
+            <span style={{ fontSize: '1.2rem' }}>💬</span>
+            トーク
+          </button>
+        </footer>
       )}
     </div>
   );
