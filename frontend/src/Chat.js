@@ -4,6 +4,7 @@ import { supabase } from './supabaseClient';
 const Chat = ({ session, friendEmail }) => {
   const [message, setMessage] = useState('');
   const [chatLog, setChatLog] = useState([]);
+  const [friendDisplayName, setFriendDisplayName] = useState('');
 
   // 二人のメールアドレスから一意のルームIDを作成
   const getRoomId = () => {
@@ -13,6 +14,20 @@ const Chat = ({ session, friendEmail }) => {
   };
 
   const roomId = getRoomId();
+
+  // ★追加: 相手の名前を取得するuseEffect
+  useEffect(() => {
+    const fetchFriendName = async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('email', friendEmail)
+        .single();
+      
+      if (data) setFriendDisplayName(data.display_name || '');
+    };
+    fetchFriendName();
+  }, [friendEmail]);
 
   useEffect(() => {
     if (!session?.access_token || !friendEmail) return;
@@ -76,7 +91,7 @@ const Chat = ({ session, friendEmail }) => {
   return (
     <div>
       <div style={{ padding: '10px', borderBottom: '1px solid #ddd', marginBottom: '10px', fontWeight: 'bold' }}>
-        対話中: {friendEmail}
+        対話中: {friendDisplayName || friendEmail}
       </div>
       <div style={{ height: '350px', overflowY: 'scroll', backgroundColor: '#f9f9f9', padding: '10px' }}>
         {chatLog.map((msg, i) => {
@@ -98,12 +113,17 @@ const Chat = ({ session, friendEmail }) => {
               </div>
             );
           }
-          // --- ここまで追加 ---
+          
+          // 修正部分: 送信者が自分なら「自分の名前」、相手なら「相手の名前」を出す
+          const isMe = msg.user === session.user.email;
+          const senderName = isMe ? '自分' : (friendDisplayName || msg.user);
 
-          // 2. システムメッセージでない場合は、通常のメッセージ（自分 or 相手）を表示
+          // システムメッセージでない場合は、通常のメッセージ（自分 or 相手）を表示
           return (
-            <div key={msg.id || i} style={{ textAlign: msg.user === session.user.email ? 'right' : 'left', marginBottom: '10px' }}>
-              <div style={{ fontSize: '0.7rem', color: '#888' }}>{msg.user}</div>
+            // <div key={msg.id || i} style={{ textAlign: msg.user === session.user.email ? 'right' : 'left', marginBottom: '10px' }}>
+            <div key={msg.id || i} style={{ textAlign: isMe ? 'right' : 'left', marginBottom: '10px' }}>
+              {/* 名前を表示 */}
+              <div style={{ fontSize: '0.7rem', color: '#888' }}>{senderName}</div>
               <div style={{ 
                 display: 'inline-block', 
                 padding: '8px 12px', 

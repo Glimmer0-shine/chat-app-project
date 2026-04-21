@@ -8,13 +8,26 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
 
   const fetchFriends = useCallback(async () => {
     if (!session?.user?.id) return;
+    
+    // ★修正: profilesテーブルからdisplay_nameを一緒に取得する
     const { data, error } = await supabase
       .from('friends')
-      .select('*')
+      .select(`
+        id,
+        friend_email,
+        created_at,
+        profiles!friend_email (
+          display_name
+        )
+      `)
       .eq('user_id', session.user.id)
       .order('created_at', { ascending: false });
 
-    if (!error) setFriendsList(data || []);
+    if (!error) {
+      setFriendsList(data || []);
+    } else {
+      console.error("友達リスト取得エラー:", error.message);
+    }
   }, [session]);
 
   useEffect(() => {
@@ -29,15 +42,14 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     }
     setLoading(true);
 
-    // 【新機能】profilesテーブルで存在チェック
     const { data: profile, error: checkError } = await supabase
       .from('profiles')
       .select('id, email')
       .eq('email', friendEmail)
-      .maybeSingle(); // データがない場合にエラーにせずnullを返す
+      .maybeSingle();
 
     if (checkError) {
-    console.error("プロフィール検索エラー:", checkError.message);
+      console.error("プロフィール検索エラー:", checkError.message);
     }
     
     if (!profile) {
@@ -46,7 +58,6 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
       return;
     }
 
-    // すでに友達かどうかのチェック（二重登録防止）
     const isAlreadyFriend = friendsList.some(f => f.friend_email === friendEmail);
     if (isAlreadyFriend) {
       alert("そのユーザーは既に追加されています");
@@ -54,13 +65,12 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
       return;
     }
 
-    // 追加実行
     const { error } = await supabase
       .from('friends')
       .insert([{ 
         user_id: session.user.id, 
         friend_email: friendEmail,
-        friend_user_id: profile.id // 相手のUUIDも保存しておく
+        friend_user_id: profile.id 
       }]);
 
     if (error) {
@@ -81,17 +91,17 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
 
   return (
     <div style={{ padding: '10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #007bff', marginBottom: '15px' }}>
-            <h3 style={{ margin: 0, paddingBottom: '10px' }}>👥 連絡帳</h3>
-            {/* 歯車アイコンのボタン */}
-            <button 
-                onClick={onOpenSettings} 
-                style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' }}
-                title="設定"
-            >
-                ⚙️
-            </button>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #007bff', marginBottom: '15px' }}>
+        <h3 style={{ margin: 0, paddingBottom: '10px' }}>👥 連絡帳</h3>
+        <button 
+          onClick={onOpenSettings} 
+          style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' }}
+          title="設定"
+        >
+          ⚙️
+        </button>
+      </div>
+
       <div style={{ display: 'flex', gap: '5px', marginBottom: '20px' }}>
         <input 
           type="email" placeholder="友達のメールアドレスを入力" 
@@ -105,15 +115,29 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
 
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {friendsList.length === 0 && <p style={{ color: '#888', textAlign: 'center' }}>友達がまだいません</p>}
-        {friendsList.map(f => (
-          <li key={f.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px 0', borderBottom: '1px solid #eee' }}>
-            <span style={{ fontWeight: '500' }}>{f.friend_email}</span>
-            <div>
-              <button onClick={() => onStartChat(f.friend_email)} style={{ marginRight: '8px', padding: '5px 12px', cursor: 'pointer' }}>トーク</button>
-              <button onClick={() => deleteFriend(f.id)} style={{ padding: '5px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>削除</button>
-            </div>
-          </li>
-        ))}
+        {friendsList.map(f => {
+          // ★追加: 表示名の判定ロジック
+          const displayName = f.profiles?.display_name;
+
+          return (
+            <li key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 0', borderBottom: '1px solid #eee' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {/* ニックネームがある場合は太字で表示 */}
+                <span style={{ fontWeight: 'bold', fontSize: '1rem' }}>
+                  {displayName || '名前未設定'}
+                </span>
+                {/* メールアドレスを補足として小さく表示 */}
+                <span style={{ fontSize: '0.75rem', color: '#888' }}>
+                  {f.friend_email}
+                </span>
+              </div>
+              <div>
+                <button onClick={() => onStartChat(f.friend_email)} style={{ marginRight: '8px', padding: '5px 12px', cursor: 'pointer' }}>トーク</button>
+                <button onClick={() => deleteFriend(f.id)} style={{ padding: '5px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>削除</button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
