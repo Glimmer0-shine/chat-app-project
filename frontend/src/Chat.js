@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import SharedFolder from './SharedFolder';
 import SharedDocuments from './SharedDocuments';
+import Calendar from './Calendar';
 
 const Chat = ({ session, friendEmail, onBack }) => {
   const [subTab, setSubTab] = useState('chat'); // 内部でサブタブを管理
@@ -80,6 +81,7 @@ const Chat = ({ session, friendEmail, onBack }) => {
       {/* 2. ルーム内サブタブ */}
       <div style={{ display: 'flex', backgroundColor: '#fff', borderBottom: '1px solid #eee' }}>
         <button onClick={() => setSubTab('chat')} style={subTabButtonStyle(subTab === 'chat')}>トーク</button>
+        <button onClick={() => setSubTab('calendar')} style={subTabButtonStyle(subTab === 'calendar')}>カレンダー</button>
         <button onClick={() => setSubTab('album')} style={subTabButtonStyle(subTab === 'album')}>アルバム</button>
         <button onClick={() => setSubTab('files')} style={subTabButtonStyle(subTab === 'files')}>ファイル</button>
       </div>
@@ -125,6 +127,7 @@ const Chat = ({ session, friendEmail, onBack }) => {
             </div>
           </div>
         )}
+        {subTab === 'calendar' && <Calendar session={session} roomId={roomId} />}
         {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} />}
         {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} />}
       </div>
