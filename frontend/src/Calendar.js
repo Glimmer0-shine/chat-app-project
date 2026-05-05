@@ -33,7 +33,42 @@ const Calendar = ({ session, roomId }) => {
     setLoading(false);
   }, [roomId]);
 
-  useEffect(() => { fetchEvents(); }, [fetchEvents]);
+  useEffect(() => {
+    // 最初のデータ取得
+    fetchEvents();
+
+    // リアルタイム監視の設定
+    const channel = supabase
+      .channel('realtime-events') // チャンネル名は何でもOK
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // INSERT, UPDATE, DELETE すべて監視
+          schema: 'public',
+          table: 'events',
+          filter: `room_id=eq.${roomId}` // 今見ている部屋のデータだけ
+        },(payload) => {
+          if (payload.eventType === 'INSERT') {
+            setEvents((prev) => [...prev, payload.new]);
+          } else if (payload.eventType === 'DELETE') {
+            // 削除されたIDを除外してステートを更新
+            setEvents((prev) => prev.filter(e => e.id !== payload.old.id));
+          } else if (payload.eventType === 'UPDATE') {
+            setEvents((prev) => prev.map(e => e.id === payload.new.id ? payload.new : e));
+          }
+        })
+      //   () => {
+      //     console.log("カレンダー更新検知！再取得します。");
+      //     fetchEvents(); // 変更があったら再読み込み
+      //   }
+      // )
+      .subscribe();
+
+    // クリーンアップ（画面を閉じる時に監視を止める）
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, fetchEvents]);
 
   // --- ヘルパー関数 ---
   const year = currentDate.getFullYear();
@@ -48,14 +83,19 @@ const Calendar = ({ session, roomId }) => {
     return holidays.length > 0 ? holidays[0].name : null;
   };
 
-  const sendSystemNotification = async (content) => {
-    await supabase.from('messages').insert([{
-      content: content,
+  const sendSystemNotification = async (textContent) => {
+    // チャットで使用している messages テーブルの正確なカラム名に合わせます
+    const { error } = await supabase.from('messages').insert([{
+      text: textContent,              // 'content' ではなく 'text'
       room_id: roomId,
-      user_id: session.user.id,
-      user_email: 'SYSTEM',
-      is_system: true
+      user: session.user.email,       // 'user_email' ではなく 'user'
+      // is_system カラムが DB に存在しない場合は、一旦外すか SQL で追加してください
+      is_system: true                 
     }]);
+
+    if (error) {
+      console.error("システム通知の送信に失敗しました:", error.message);
+    }
   };
 
   // --- アクション関数 ---

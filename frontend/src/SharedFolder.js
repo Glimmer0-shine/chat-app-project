@@ -1,23 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
-const SharedFolder = ({ session, friendEmail }) => {
+// roomId (グループ用) を追加で受け取れるように変更
+const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
   const [images, setImages] = useState([]);
 
-  const getRoomId = useCallback(() => {
+  // ストレージの保存先パス（フォルダ名）を決定
+  const getStoragePath = useCallback(() => {
+    if (propsRoomId) return propsRoomId; // グループならそのID
     if (!session?.user?.email || !friendEmail) return 'public';
     const sorted = [session.user.email, friendEmail].sort();
     return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_');
-  }, [session, friendEmail]);
+  }, [session, friendEmail, propsRoomId]);
 
-  const roomId = getRoomId();
+  // 通知を送る先のトークルームIDを決定
+  const getChatRoomId = useCallback(() => {
+    if (propsRoomId) return propsRoomId; // グループならそのID
+    const sorted = [session.user.email, friendEmail].sort();
+    return `${sorted[0]}-${sorted[1]}`;
+  }, [session, friendEmail, propsRoomId]);
 
+  const storagePath = getStoragePath();
+  const chatRoomId = getChatRoomId();
+
+  // 画像一覧の取得
   const fetchImages = useCallback(async () => {
     const { data, error } = await supabase
       .storage
       .from('shared-folder')
-      .list(roomId, { 
+      .list(storagePath, { 
         limit: 100, 
         order: { column: 'created_at', ascending: false } 
       });
@@ -25,24 +37,50 @@ const SharedFolder = ({ session, friendEmail }) => {
     if (error) {
       console.error('画像取得エラー:', error.message);
     } else {
+      // フォルダを除外してファイルのみセット
       const filesOnly = data?.filter(item => item.metadata) || [];
       setImages(filesOnly);
     }
-  }, [roomId]);
+  }, [storagePath]);
 
+  // ★リアルタイム監視設定
   useEffect(() => {
     fetchImages();
-  }, [fetchImages]);
 
-  // ★追加機能：トークルームに通知メッセージを送る
+    // messagesテーブルを監視して、システム通知が来たら再読み込みする
+    const channel = supabase
+      .channel(`album_sync_${chatRoomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `room_id=eq.${chatRoomId}`
+        },
+        (payload) => {
+          // システムメッセージ（is_system: true）なら画像を更新
+          if (payload.new.is_system) {
+            console.log("アルバム更新通知を受信しました");
+            fetchImages();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [chatRoomId, fetchImages]);
+
+  // 通知メッセージを送る関数
   const sendSystemMessage = async (text) => {
-    const chatRoomId = [session.user.email, friendEmail].sort().join('-');
     await supabase.from('messages').insert([
       {
         room_id: chatRoomId,
         user: session.user.email,
         text: text,
-        is_system: true, // ★システムメッセージとして保存
+        is_system: true,
       },
     ]);
   };
@@ -55,7 +93,7 @@ const SharedFolder = ({ session, friendEmail }) => {
       const file = event.target.files[0];
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}.${fileExt}`;
-      const filePath = `${roomId}/${fileName}`;
+      const filePath = `${storagePath}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('shared-folder')
@@ -63,9 +101,8 @@ const SharedFolder = ({ session, friendEmail }) => {
 
       if (uploadError) throw uploadError;
 
-      // ★追加：通知メッセージの投稿
+      // 通知メッセージを送る（これがトリガーになって相手の画面も更新される）
       await sendSystemMessage("📷 アルバムに新しい写真が追加されました");
-
       fetchImages();
     } catch (error) {
       console.error('Upload error:', error);
@@ -75,29 +112,21 @@ const SharedFolder = ({ session, friendEmail }) => {
     }
   };
 
-  // ★修正：画像の削除
   const deleteImage = async (fileName) => {
     if (!window.confirm('この写真を削除してもよろしいですか？')) return;
 
     try {
-      const fullPath = `${roomId}/${fileName}`;
-      console.log("★削除試行パス:", fullPath);
-
+      const fullPath = `${storagePath}/${fileName}`;
       const { data, error } = await supabase.storage
         .from('shared-folder')
-        .remove([fullPath]); // 配列で渡す必要があります
+        .remove([fullPath]);
 
       if (error) throw error;
 
-      // dataが空配列で返ってくる場合は削除失敗（ファイルが見つからない等）
       if (data && data.length > 0) {
-        console.log("★削除成功:", data);
         await sendSystemMessage(`🗑️ 写真が削除されました`);
         fetchImages();
-      } else {
-        console.warn("★削除対象が見つかりませんでした");
       }
-
     } catch (error) {
       console.error('Delete error:', error);
       alert('削除に失敗しました。');
@@ -107,7 +136,7 @@ const SharedFolder = ({ session, friendEmail }) => {
   const getImageUrl = (fileName) => {
     const { data } = supabase.storage
       .from('shared-folder')
-      .getPublicUrl(`${roomId}/${fileName}`);
+      .getPublicUrl(`${storagePath}/${fileName}`);
     return data.publicUrl;
   };
 
@@ -136,11 +165,9 @@ const SharedFolder = ({ session, friendEmail }) => {
                 alt={img.name} 
                 style={styles.image} 
               />
-              {/* ★追加：削除ボタン */}
               <button 
                 onClick={() => deleteImage(img.name)}
                 style={styles.deleteBtn}
-                title="削除"
               >
                 ×
               </button>
@@ -161,8 +188,7 @@ const styles = {
   uploadLabel: { cursor: 'pointer', color: '#007bff', fontWeight: 'bold', display: 'block' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px' },
   imageWrapper: { 
-    position: 'relative', // 削除ボタン配置用
-    width: '100%', aspectRatio: '1/1', 
+    position: 'relative', width: '100%', aspectRatio: '1/1', 
     overflow: 'hidden', borderRadius: '8px', backgroundColor: '#eee' 
   },
   image: { width: '100%', height: '100%', objectFit: 'cover' },

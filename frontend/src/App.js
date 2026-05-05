@@ -12,6 +12,8 @@ function App() {
   const [currentChatFriend, setCurrentChatFriend] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
   const [myDisplayName, setMyDisplayName] = useState('');
+  const [currentChatRoomId, setCurrentChatRoomId] = useState(null); // 追加
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // 下部タブのスタイル
   const footerTabStyle = (isActive) => ({
@@ -57,8 +59,9 @@ function App() {
     }
   }, [session, showProfile]);
 
-  const handleStartChat = (friendEmail) => {
+  const handleStartChat = (friendEmail, roomId = null) => {
     setCurrentChatFriend(friendEmail);
+    setCurrentChatRoomId(roomId); // roomIdがあればセット
     setShowProfile(false);
   };
 
@@ -84,11 +87,21 @@ function App() {
         <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
           {showProfile ? (
             <Profile session={session} onBack={() => setShowProfile(false)} />
-          ) : currentChatFriend ? (
+          ) : (currentChatFriend || currentChatRoomId) ? (
+            // App.js の Chat コンポーネントを呼び出している部分
             <Chat 
               session={session} 
               friendEmail={currentChatFriend} 
-              onBack={() => setCurrentChatFriend(null)} 
+              roomId={currentChatRoomId}
+              onBack={() => {
+                setCurrentChatFriend(null);
+                setCurrentChatRoomId(null);
+                setRefreshKey(prev => prev + 1);
+                // ↓ ここが重要！ 戻った後に一覧をリフレッシュする処理
+                // if (activeTab === 'rooms') {
+                //   // Rooms.js に再取得を促す仕組み（後述のRooms.jsの修正とセット）
+                // }
+              }}
             />
           ) : activeTab === 'friends' ? (
             <Friends 
@@ -97,7 +110,11 @@ function App() {
               onOpenSettings={() => setShowProfile(true)} 
             />
           ) : (
-            <Rooms session={session} onSelectRoom={handleStartChat} />
+            <Rooms 
+              key={refreshKey} // ★重要：これが変わると Rooms が新しく作り直される
+              session={session} 
+              onSelectRoom={handleStartChat} 
+            />
           )}
         </div>
       </div>

@@ -17,5 +17,8 @@ frontend/src/supabaseClient.js
 # text files
 Geminiログ.pages
 
+# todo list
+chat-app-project_改善項目リスト.numbers
+
 #ワークスペース
 chat-app-project.code-workspace

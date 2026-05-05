@@ -1,65 +1,225 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import SharedFolder from './SharedFolder';
 import SharedDocuments from './SharedDocuments';
 import Calendar from './Calendar';
 
-const Chat = ({ session, friendEmail, onBack }) => {
-  const [subTab, setSubTab] = useState('chat'); // 内部でサブタブを管理
+const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
+  const [subTab, setSubTab] = useState('chat');
   const [message, setMessage] = useState('');
   const [chatLog, setChatLog] = useState([]);
   const [friendDisplayName, setFriendDisplayName] = useState('');
+  const [myStatus, setMyStatus] = useState('joined');
+  
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [friendsList, setFriendsList] = useState([]);
+  const [selectedFriends, setSelectedFriends] = useState([]);
+  const [isMemberListOpen, setIsMemberListOpen] = useState(false);
+  const [members, setMembers] = useState([]);
 
-  const getRoomId = () => {
+  const getRoomId = useCallback(() => {
+    if (propsRoomId) return propsRoomId;
     if (!session?.user?.email || !friendEmail) return 'public';
     const sorted = [session.user.email, friendEmail].sort();
     return `${sorted[0]}-${sorted[1]}`;
-  };
+  }, [propsRoomId, session, friendEmail]);
 
   const roomId = getRoomId();
-
+  
   useEffect(() => {
-    const fetchFriendName = async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('display_name')
-        .eq('email', friendEmail)
-        .single();
-      if (data) setFriendDisplayName(data.display_name || '');
+    const fetchChatInfo = async () => {
+      if (propsRoomId && session?.user?.id) {
+        // 自分のステータス取得
+        const { data: memberData } = await supabase
+          .from('room_members')
+          .select('status')
+          .eq('room_id', propsRoomId)
+          .eq('user_id', session.user.id)
+          .single();
+        if (memberData) setMyStatus(memberData.status);
+      } else {
+        setMyStatus('joined');
+      }
+
+      if (propsRoomId) {
+        const { data } = await supabase.from('rooms').select('name').eq('id', propsRoomId).single();
+        if (data) setFriendDisplayName(data.name);
+      } else if (friendEmail) {
+        const { data } = await supabase.from('profiles').select('display_name').eq('email', friendEmail).single();
+        if (data) setFriendDisplayName(data.display_name || '');
+      }
     };
-    fetchFriendName();
-  }, [friendEmail]);
+    fetchChatInfo();
+  }, [friendEmail, propsRoomId, session]);
 
   useEffect(() => {
-    if (!session?.access_token || !friendEmail) return;
+    if (!session?.access_token || (!friendEmail && !propsRoomId)) return;
     supabase.realtime.setAuth(session.access_token);
+
     const fetchMessages = async () => {
-      const { data, error } = await supabase
+      const { data: messages, error: msgError } = await supabase
         .from('messages')
         .select('*')
         .eq('room_id', roomId)
         .order('created_at', { ascending: true });
-      if (!error) setChatLog(data || []);
+
+      if (msgError) return;
+
+      const userEmails = [...new Set(messages.map(m => m.user))];
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('email, display_name')
+        .in('email', userEmails);
+
+      const enrichedMessages = messages.map(msg => ({
+        ...msg,
+        profiles: profiles?.find(p => p.email === msg.user)
+      }));
+      setChatLog(enrichedMessages);
     };
+
     fetchMessages();
 
     const channel = supabase
       .channel(roomId)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
-        (payload) => {
-          setChatLog((prev) => {
-            const exists = prev.find((msg) => msg.id === payload.new.id);
-            if (exists) return prev;
-            return [...prev, payload.new];
-          });
-        }
-      ).subscribe();
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'messages', 
+        filter: `room_id=eq.${roomId}` 
+      }, (payload) => {
+        setChatLog((prev) => {
+          const exists = prev.find((msg) => msg.id === payload.new.id);
+          if (exists) return prev;
+          return [...prev, payload.new];
+        });
+      }).subscribe();
     return () => supabase.removeChannel(channel);
-  }, [session, roomId, friendEmail]);
+  }, [session, roomId, friendEmail, propsRoomId]);
+
+  const handleInviteResponse = async (newStatus) => {
+    if (newStatus === 'joined') {
+      const { error } = await supabase
+        .from('room_members')
+        .update({ status: 'joined' })
+        .eq('room_id', propsRoomId)
+        .eq('user_id', session.user.id);
+
+      if (error) {
+        alert("参加処理に失敗しました: " + error.message);
+        return;
+      }
+
+      await supabase.from('messages').insert([{ 
+        room_id: propsRoomId, 
+        user: session.user.email, 
+        text: `${session.user.email}さんが参加しました`, 
+        is_system: true 
+      }]);
+
+      setMyStatus('joined');
+      alert("グループに参加しました！");
+    } else {
+      if (!window.confirm("招待を拒否してこのグループ一覧から削除しますか？")) return;
+      const { error } = await supabase
+        .from('room_members')
+        .delete()
+        .eq('room_id', propsRoomId)
+        .eq('user_id', session.user.id);
+      if (!error) onBack();
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!window.confirm("本当にこのグループを脱退しますか？共有されたファイルや予定は見られなくなります。")) return;
+    const { error } = await supabase
+      .from('room_members')
+      .delete()
+      .eq('room_id', propsRoomId)
+      .eq('user_id', session.user.id);
+    
+    if (!error) {
+      await supabase.from('messages').insert([{ 
+        room_id: propsRoomId, 
+        user: session.user.email, 
+        text: `${session.user.email}さんが脱退しました`, 
+        is_system: true 
+      }]);
+      onBack();
+    }
+  };
+
+  const openInviteModal = async () => {
+    const { data: friendRows } = await supabase
+      .from('friends')
+      .select('friend_email')
+      .eq('user_id', session.user.id);
+
+    if (!friendRows || friendRows.length === 0) {
+      alert("招待できる友達がいません。");
+      return;
+    }
+
+    const friendEmails = friendRows.map(f => f.friend_email);
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, email, display_name')
+      .in('email', friendEmails);
+
+    setFriendsList(profiles || []);
+    setIsInviteModalOpen(true);
+  };
+
+  const executeInvite = async () => {
+    if (selectedFriends.length === 0) return;
+    const inserts = selectedFriends.map(friendId => ({
+      room_id: propsRoomId,
+      user_id: friendId,
+      status: 'pending'
+    }));
+
+    const { error } = await supabase.from('room_members').insert(inserts);
+
+    if (error) {
+      alert("既に招待済みのユーザーが含まれているか、エラーが発生しました。");
+    } else {
+      alert(`${selectedFriends.length}名を招待しました！`);
+      setIsInviteModalOpen(false);
+      setSelectedFriends([]);
+    }
+  };
+
+  const fetchMembers = async () => {
+    if (!propsRoomId) return;
+
+    // RLSをシンプルに戻したので、このクエリで動作します
+    const { data, error } = await supabase
+      .from('room_members')
+      .select(`
+        user_id,
+        status,
+        profiles!room_members_user_id_fkey ( display_name, email )
+      `)
+      .eq('room_id', propsRoomId);
+
+    if (error) {
+      console.error("メンバー取得エラー:", error);
+      return;
+    }
+    
+    if (data) {
+      setMembers(data);
+      setIsMemberListOpen(true);
+    }
+  };
 
   const sendMessage = async () => {
-    if (!message.trim() || !session?.user) return;
-    const { error } = await supabase.from('messages').insert([{ text: message, user: session.user.email, room_id: roomId }]);
+    if (!message.trim() || !session?.user || myStatus !== 'joined') return;
+    const { error } = await supabase.from('messages').insert([{ 
+      text: message, 
+      user: session.user.email, 
+      room_id: roomId 
+    }]);
     if (!error) setMessage('');
   };
 
@@ -71,22 +231,91 @@ const Chat = ({ session, friendEmail, onBack }) => {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* 1. チャットヘッダー（最上部固定） */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', padding: '10px 15px', borderBottom: '1px solid #eee', backgroundColor: '#fff' }}>
         <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', marginRight: '10px' }}>←</button>
-        <span style={{ fontWeight: 'bold' }}>{friendDisplayName || friendEmail}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 'bold', cursor: 'pointer' }} onClick={fetchMembers}>
+            {friendDisplayName || friendEmail} 
+          </div>
+        </div>
+        {propsRoomId && myStatus === 'joined' && (
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={openInviteModal} style={styles.headerBtn}>＋招待</button>
+            <button onClick={handleLeaveGroup} style={{...styles.headerBtn, color: '#dc3545'}}>脱退</button>
+          </div>
+        )}
       </div>
 
-      {/* 2. ルーム内サブタブ */}
+      {isMemberListOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <h3 style={{ fontSize: '1rem', marginBottom: '15px' }}>メンバー一覧</h3>
+            <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+              {members.map((m, i) => (
+                <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>{m.profiles?.display_name || m.profiles?.email}</span>
+                  <span style={{ fontSize: '0.7rem', color: m.status === 'joined' ? 'green' : 'orange' }}>
+                    {m.status === 'joined' ? '参加中' : '招待中'}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setIsMemberListOpen(false)} style={{ ...styles.cancelBtn, marginTop: '15px', width: '100%' }}>閉じる</button>
+          </div>
+        </div>
+      )}
+
+      {isInviteModalOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <h3 style={{ fontSize: '1rem', marginBottom: '15px' }}>友達を一括招待</h3>
+            <div style={{ maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', textAlign: 'left' }}>
+              {friendsList.map(friend => (
+                <label key={friend.id} style={styles.friendItem}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedFriends.includes(friend.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedFriends([...selectedFriends, friend.id]);
+                      else setSelectedFriends(selectedFriends.filter(id => id !== friend.id));
+                    }}
+                  />
+                  <span style={{ marginLeft: '10px', fontSize: '0.9rem' }}>{friend.display_name || friend.email}</span>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={executeInvite} style={styles.inviteSubmitBtn} disabled={!selectedFriends.length}>招待を送る</button>
+              <button onClick={() => {setIsInviteModalOpen(false); setSelectedFriends([]);}} style={styles.cancelBtn}>中止</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {myStatus === 'pending' && (
+        <div style={{ backgroundColor: '#fff9db', padding: '15px', textAlign: 'center', borderBottom: '1px solid #ffe066' }}>
+          <p style={{ fontSize: '0.85rem', margin: '0 0 10px 0', color: '#856404' }}>
+            このグループに招待されています。
+          </p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+            <button onClick={() => handleInviteResponse('joined')} style={{ backgroundColor: '#28a745', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' }}>参加する</button>
+            <button onClick={() => handleInviteResponse('rejected')} style={{ backgroundColor: '#dc3545', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' }}>拒否する</button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', backgroundColor: '#fff', borderBottom: '1px solid #eee' }}>
         <button onClick={() => setSubTab('chat')} style={subTabButtonStyle(subTab === 'chat')}>トーク</button>
-        <button onClick={() => setSubTab('calendar')} style={subTabButtonStyle(subTab === 'calendar')}>カレンダー</button>
-        <button onClick={() => setSubTab('album')} style={subTabButtonStyle(subTab === 'album')}>アルバム</button>
-        <button onClick={() => setSubTab('files')} style={subTabButtonStyle(subTab === 'files')}>ファイル</button>
+        {myStatus === 'joined' && (
+          <>
+            <button onClick={() => setSubTab('calendar')} style={subTabButtonStyle(subTab === 'calendar')}>カレンダー</button>
+            <button onClick={() => setSubTab('album')} style={subTabButtonStyle(subTab === 'album')}>アルバム</button>
+            <button onClick={() => setSubTab('files')} style={subTabButtonStyle(subTab === 'files')}>ファイル</button>
+          </>
+        )}
       </div>
 
-      {/* 3. コンテンツエリア */}
       <div style={{ flex: 1, overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {subTab === 'chat' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -100,38 +329,56 @@ const Chat = ({ session, friendEmail, onBack }) => {
                   );
                 }
                 const isMe = msg.user === session.user.email;
+                const senderName = msg.profiles?.display_name || msg.user;
                 return (
                   <div key={msg.id || i} style={{ textAlign: isMe ? 'right' : 'left', marginBottom: '15px' }}>
-                    {!isMe && <div style={{ fontSize: '0.65rem', color: '#888', marginLeft: '5px', marginBottom: '2px' }}>{friendDisplayName || msg.user}</div>}
+                    {!isMe && <div style={{ fontSize: '0.65rem', color: '#888', marginLeft: '5px', marginBottom: '2px' }}>{senderName}</div>}
                     <div style={{ 
                       display: 'inline-block', padding: '8px 14px', borderRadius: '18px', 
                       backgroundColor: isMe ? '#007bff' : '#fff', color: isMe ? 'white' : 'black',
                       maxWidth: '80%', textAlign: 'left', boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
-                    }}>
-                      {msg.text}
-                    </div>
+                    }}>{msg.text}</div>
                   </div>
                 );
               })}
             </div>
-            {/* メッセージ入力エリア */}
-            <div style={{ padding: '10px', backgroundColor: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
-              <input
-                style={{ flex: 1, padding: '10px', borderRadius: '20px', border: '1px solid #ddd', outline: 'none' }}
-                placeholder="メッセージを入力"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.key === 'Enter') sendMessage(); }}
-              />
-              <button onClick={sendMessage} style={{ backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' }}>▲</button>
-            </div>
+            {myStatus === 'joined' ? (
+              <div style={{ padding: '10px', backgroundColor: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
+                <input
+                  style={{ flex: 1, padding: '10px', borderRadius: '20px', border: '1px solid #ddd', outline: 'none' }}
+                  placeholder="メッセージを入力"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.key === 'Enter') sendMessage(); }}
+                />
+                <button onClick={sendMessage} style={{ backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' }}>▲</button>
+              </div>
+            ) : (
+              <div style={{ padding: '15px', textAlign: 'center', color: '#888', fontSize: '0.8rem', backgroundColor: '#eee' }}>
+                参加するとメッセージを送信できるようになります
+              </div>
+            )}
           </div>
         )}
-        {subTab === 'calendar' && <Calendar session={session} roomId={roomId} />}
-        {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} />}
-        {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} />}
+        {myStatus === 'joined' && (
+          <>
+            {subTab === 'calendar' && <Calendar session={session} roomId={roomId} />}
+            {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} roomId={roomId} />}
+            {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} roomId={roomId} />}
+          </>
+        )}
       </div>
     </div>
   );
 };
+
+const styles = {
+  headerBtn: { padding: '5px 10px', fontSize: '0.75rem', backgroundColor: '#f8f9fa', border: '1px solid #ddd', borderRadius: '5px', cursor: 'pointer' },
+  modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
+  modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '85%', maxWidth: '300px', textAlign: 'center' },
+  friendItem: { display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #eee', cursor: 'pointer' },
+  inviteSubmitBtn: { flex: 1, backgroundColor: '#007bff', color: '#fff', border: 'none', padding: '10px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
+  cancelBtn: { flex: 1, backgroundColor: '#6c757d', color: '#fff', border: 'none', padding: '10px', borderRadius: '5px', cursor: 'pointer' },
+};
+
 export default Chat;
