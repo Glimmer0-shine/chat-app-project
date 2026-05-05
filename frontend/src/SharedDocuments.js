@@ -1,24 +1,34 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
-const SharedDocuments = ({ session, friendEmail }) => {
+const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState([]);
 
-  const getRoomId = useCallback(() => {
+  // ストレージの保存先フォルダ名を決定
+  const getStoragePath = useCallback(() => {
+    if (propsRoomId) return propsRoomId; // グループならそのUUID
     if (!session?.user?.email || !friendEmail) return 'public';
     const sorted = [session.user.email, friendEmail].sort();
-    return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_');
-  }, [session, friendEmail]);
+    return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_'); // 1対1用
+  }, [session, friendEmail, propsRoomId]);
 
-  const roomId = getRoomId();
+  // 通知を送る先のトークルームIDを決定
+  const getChatRoomId = useCallback(() => {
+    if (propsRoomId) return propsRoomId; // グループチャットID
+    const sorted = [session.user.email, friendEmail].sort();
+    return `${sorted[0]}-${sorted[1]}`; // 1対1チャットID
+  }, [session, friendEmail, propsRoomId]);
+
+  const storagePath = getStoragePath();
+  const chatRoomId = getChatRoomId();
 
   // ファイル一覧の取得
   const fetchFiles = useCallback(async () => {
     const { data, error } = await supabase
       .storage
       .from('shared-documents')
-      .list(roomId, { 
+      .list(storagePath, { 
         limit: 100, 
         order: { column: 'created_at', ascending: false } 
       });
@@ -29,16 +39,45 @@ const SharedDocuments = ({ session, friendEmail }) => {
       const filesOnly = data?.filter(item => item.metadata) || [];
       setFiles(filesOnly);
     }
-  }, [roomId]);
+  }, [storagePath]);
 
+  // ★リアルタイム監視：システムメッセージが来たら再読み込み
   useEffect(() => {
     fetchFiles();
-  }, [fetchFiles]);
+
+    const channel = supabase
+      .channel(`doc_sync_${chatRoomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `room_id=eq.${chatRoomId}`
+        },
+        (payload) => {
+          // システムメッセージをトリガーに更新
+          if (payload.new.is_system) {
+            console.log("ドキュメント更新を検知しました");
+            fetchFiles();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [chatRoomId, fetchFiles]);
 
   const sendSystemMessage = async (text) => {
-    const chatRoomId = [session.user.email, friendEmail].sort().join('-');
     await supabase.from('messages').insert([
-      { room_id: chatRoomId, user: session.user.email, text: text, is_system: true },
+      { 
+        room_id: chatRoomId, 
+        user: session.user.email, 
+        text: text, 
+        is_system: true 
+      },
     ]);
   };
 
@@ -49,8 +88,8 @@ const SharedDocuments = ({ session, friendEmail }) => {
       if (!event.target.files || event.target.files.length === 0) return;
 
       const file = event.target.files[0];
-      const fileName = `${Date.now()}_${file.name}`; // ファイル名を保持
-      const filePath = `${roomId}/${fileName}`;
+      const fileName = `${Date.now()}_${file.name}`;
+      const filePath = `${storagePath}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('shared-documents')
@@ -58,9 +97,11 @@ const SharedDocuments = ({ session, friendEmail }) => {
 
       if (uploadError) throw uploadError;
 
+      // ★通知メッセージを投稿
       await sendSystemMessage(`📄 ファイル「${file.name}」が共有されました`);
       fetchFiles();
     } catch (error) {
+      console.error('Upload error:', error);
       alert('アップロードに失敗しました。');
     } finally {
       setUploading(false);
@@ -71,26 +112,27 @@ const SharedDocuments = ({ session, friendEmail }) => {
   const deleteFile = async (fileName) => {
     if (!window.confirm('このファイルを削除してもよろしいですか？')) return;
     try {
-      const fullPath = `${roomId}/${fileName}`;
+      const fullPath = `${storagePath}/${fileName}`;
       const { data, error } = await supabase.storage
         .from('shared-documents')
         .remove([fullPath]);
 
       if (error) throw error;
       if (data && data.length > 0) {
+        // ★通知メッセージを投稿
         await sendSystemMessage(`🗑️ ファイルが削除されました`);
         fetchFiles();
       }
     } catch (error) {
+      console.error('Delete error:', error);
       alert('削除に失敗しました。');
     }
   };
 
-  // ダウンロードURL取得
   const getDownloadUrl = (fileName) => {
     const { data } = supabase.storage
       .from('shared-documents')
-      .getPublicUrl(`${roomId}/${fileName}`);
+      .getPublicUrl(`${storagePath}/${fileName}`);
     return data.publicUrl;
   };
 
@@ -117,7 +159,8 @@ const SharedDocuments = ({ session, friendEmail }) => {
                   rel="noopener noreferrer" 
                   style={styles.fileName}
                 >
-                  {file.name.split('_').slice(1).join('_')} {/* タイムスタンプ部分を除去して表示 */}
+                  {/* タイムスタンプ部分を除去して表示 */}
+                  {file.name.includes('_') ? file.name.split('_').slice(1).join('_') : file.name}
                 </a>
               </div>
               <button onClick={() => deleteFile(file.name)} style={styles.deleteBtn}>削除</button>
@@ -131,7 +174,7 @@ const SharedDocuments = ({ session, friendEmail }) => {
 
 const styles = {
   uploadBox: { marginBottom: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px', textAlign: 'center', border: '1px solid #ddd' },
-  uploadLabel: { cursor: 'pointer', color: '#28a745', fontWeight: 'bold' },
+  uploadLabel: { cursor: 'pointer', color: '#28a745', fontWeight: 'bold', display: 'block' },
   list: { display: 'flex', flexDirection: 'column', gap: '10px' },
   fileItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', backgroundColor: 'white', borderRadius: '5px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
   fileInfo: { display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden' },
