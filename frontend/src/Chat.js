@@ -16,6 +16,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   const [selectedFriends, setSelectedFriends] = useState([]);
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
   const [members, setMembers] = useState([]);
+  const [memberCount, setMemberCount] = useState(0); // 参加人数用
 
   const getRoomId = useCallback(() => {
     if (propsRoomId) return propsRoomId;
@@ -25,6 +26,29 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   }, [propsRoomId, session, friendEmail]);
 
   const roomId = getRoomId();
+  
+  // useCallbackで囲むことで、依存関係のエラーを解消し、無限ループを防ぎます
+  const fetchMembers = useCallback(async (shouldOpenModal = false) => {
+    if (!propsRoomId) return;
+
+    try {
+      const { data, error } = await supabase
+        .rpc('get_room_members', { p_room_id: propsRoomId });
+
+      if (error) throw error;
+
+      if (data) {
+        setMembers(data);
+        setMemberCount(data.length);
+        // 引数が true の時だけモーダルを開くように変更
+        if (shouldOpenModal) {
+          setIsMemberListOpen(true);
+        }
+      }
+    } catch (error) {
+      console.error('メンバー取得エラー:', error.message);
+    }
+  }, [propsRoomId]); // propsRoomIdが変わった時だけ関数を再生成する
   
   useEffect(() => {
     const fetchChatInfo = async () => {
@@ -44,13 +68,16 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       if (propsRoomId) {
         const { data } = await supabase.from('rooms').select('name').eq('id', propsRoomId).single();
         if (data) setFriendDisplayName(data.name);
+
+        fetchMembers();
+
       } else if (friendEmail) {
         const { data } = await supabase.from('profiles').select('display_name').eq('email', friendEmail).single();
         if (data) setFriendDisplayName(data.display_name || '');
       }
     };
     fetchChatInfo();
-  }, [friendEmail, propsRoomId, session]);
+  }, [friendEmail, propsRoomId, session, fetchMembers]);
 
   useEffect(() => {
     if (!session?.access_token || (!friendEmail && !propsRoomId)) return;
@@ -189,30 +216,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     }
   };
 
-  const fetchMembers = async () => {
-    if (!propsRoomId) return;
-
-    // RLSをシンプルに戻したので、このクエリで動作します
-    const { data, error } = await supabase
-      .from('room_members')
-      .select(`
-        user_id,
-        status,
-        profiles!room_members_user_id_fkey ( display_name, email )
-      `)
-      .eq('room_id', propsRoomId);
-
-    if (error) {
-      console.error("メンバー取得エラー:", error);
-      return;
-    }
-    
-    if (data) {
-      setMembers(data);
-      setIsMemberListOpen(true);
-    }
-  };
-
   const sendMessage = async () => {
     if (!message.trim() || !session?.user || myStatus !== 'joined') return;
     const { error } = await supabase.from('messages').insert([{ 
@@ -233,12 +236,25 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', padding: '10px 15px', borderBottom: '1px solid #eee', backgroundColor: '#fff' }}>
+        {/* 戻るボタン */}
         <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', marginRight: '10px' }}>←</button>
+        
+        {/* グループ名と人数 */}
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 'bold', cursor: 'pointer' }} onClick={fetchMembers}>
-            {friendDisplayName || friendEmail} 
+          <div 
+            style={{ fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }} 
+            onClick={() => fetchMembers(true)}
+          >
+            <span>{friendDisplayName || friendEmail}</span>
+            {memberCount > 0 && (
+              <span style={{ fontSize: '0.85rem', color: '#666', fontWeight: 'normal' }}>
+                ({memberCount})
+              </span>
+            )}
           </div>
         </div>
+
+        {/* 招待・脱退ボタン（条件に合致する場合のみ表示） */}
         {propsRoomId && myStatus === 'joined' && (
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={openInviteModal} style={styles.headerBtn}>＋招待</button>
