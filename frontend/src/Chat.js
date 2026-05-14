@@ -290,6 +290,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
               {friendsList.map(friend => (
                 <label key={friend.id} style={styles.friendItem}>
                   <input 
+                    id={`invite-check-${friend.id}`} // ループ内なのでユニークなIDを付与
+                    name="invite-friend"
                     type="checkbox" 
                     checked={selectedFriends.includes(friend.id)}
                     onChange={(e) => {
@@ -361,6 +363,9 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
             {myStatus === 'joined' ? (
               <div style={{ padding: '10px', backgroundColor: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
                 <input
+                  id="chat-message"
+                  name="message"
+                  autoComplete="off"
                   style={{ flex: 1, padding: '10px', borderRadius: '20px', border: '1px solid #ddd', outline: 'none' }}
                   placeholder="メッセージを入力"
                   value={message}

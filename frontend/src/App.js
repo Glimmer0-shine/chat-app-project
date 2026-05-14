@@ -7,13 +7,15 @@ import Profile from './Profile';
 import Rooms from './Rooms';
 
 function App() {
+  // --- 1. ステート定義 (初期値としてlocalStorageを読み込む) ---
   const [session, setSession] = useState(null);
-  const [activeTab, setActiveTab] = useState('friends');
-  const [currentChatFriend, setCurrentChatFriend] = useState(null);
-  const [showProfile, setShowProfile] = useState(false);
-  const [myDisplayName, setMyDisplayName] = useState('');
-  const [currentChatRoomId, setCurrentChatRoomId] = useState(null); // 追加
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'friends');
+  const [currentChatFriend, setCurrentChatFriend] = useState(() => localStorage.getItem('currentChatFriend') || null);
+  const [currentChatRoomId, setCurrentChatRoomId] = useState(() => localStorage.getItem('currentChatRoomId') || null);
+  const [showProfile, setShowProfile] = useState(() => localStorage.getItem('showProfile') === 'true');
+  // const [myDisplayName, setMyDisplayName] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+
 
   // 下部タブのスタイル
   const footerTabStyle = (isActive) => ({
@@ -45,19 +47,43 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // --- 3. useEffect 2: リロード時の「戻し」処理 (初回のみ) ---
   useEffect(() => {
-    if (session?.user) {
-      const fetchMyProfile = async () => {
-        const { data } = await supabase
-          .from('profiles')
-          .select('display_name')
-          .eq('id', session.user.id)
-          .single();
-        if (data) setMyDisplayName(data.display_name || '');
-      };
-      fetchMyProfile();
+    // トーク中、またはプロフィール中にリロードされた場合、強制的に一覧画面へ戻す
+    const isChatting = localStorage.getItem('currentChatFriend') || localStorage.getItem('currentChatRoomId');
+    const isViewingProfile = localStorage.getItem('showProfile') === 'true';
+
+    if (isChatting) {
+      setCurrentChatFriend(null);
+      setCurrentChatRoomId(null);
+      setActiveTab('rooms');
+    } else if (isViewingProfile) {
+      setShowProfile(false);
+      setActiveTab('friends');
     }
-  }, [session, showProfile]);
+  }, []);
+
+  // useEffect(() => {
+  //   if (session?.user) {
+  //     const fetchMyProfile = async () => {
+  //       const { data } = await supabase
+  //         .from('profiles')
+  //         .select('display_name')
+  //         .eq('id', session.user.id)
+  //         .single();
+  //       if (data) setMyDisplayName(data.display_name || '');
+  //     };
+  //     fetchMyProfile();
+  //   }
+  // }, [session, showProfile]);
+
+  // --- 5. useEffect 4: 状態が変わるたびに localStorage に保存 ---
+  useEffect(() => {
+    localStorage.setItem('activeTab', activeTab);
+    localStorage.setItem('currentChatFriend', currentChatFriend || '');
+    localStorage.setItem('currentChatRoomId', currentChatRoomId || '');
+    localStorage.setItem('showProfile', showProfile);
+  }, [activeTab, currentChatFriend, currentChatRoomId, showProfile]);
 
   const handleStartChat = (friendEmail, roomId = null) => {
     setCurrentChatFriend(friendEmail);
@@ -78,7 +104,9 @@ function App() {
         {/* チャット中でない場合のみ上部ヘッダーを表示 */}
         {!currentChatFriend && !showProfile && (
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 20px', borderBottom: '1px solid #eee' }}>
-            <span style={{ fontSize: '0.9rem' }}>👤 <strong>{myDisplayName || session.user.email}</strong></span>
+            <span style={{ fontSize: '0.9rem', fontFamily: "cursive" }}>
+              🍀Y Talk
+            </span>
             <button onClick={handleLogout} style={{ padding: '5px 10px', fontSize: '0.8rem' }}>ログアウト</button>
           </header>
         )}
@@ -96,6 +124,8 @@ function App() {
               onBack={() => {
                 setCurrentChatFriend(null);
                 setCurrentChatRoomId(null);
+                localStorage.removeItem('currentChatFriend');
+                localStorage.removeItem('currentChatRoomId');
                 setRefreshKey(prev => prev + 1);
                 // ↓ ここが重要！ 戻った後に一覧をリフレッシュする処理
                 // if (activeTab === 'rooms') {
@@ -120,7 +150,7 @@ function App() {
       </div>
 
       {/* 2. 下部メインタブ (個別チャット中・プロフィール編集中は非表示) */}
-      {!currentChatFriend && !showProfile && (
+      {!currentChatFriend && !currentChatRoomId && !showProfile && (
         <footer style={{ 
           display: 'flex', 
           borderTop: '1px solid #eee', 

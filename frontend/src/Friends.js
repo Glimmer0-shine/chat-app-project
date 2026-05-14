@@ -104,6 +104,9 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
 
       <div style={{ display: 'flex', gap: '5px', marginBottom: '20px' }}>
         <input 
+          id="friend-search"
+          name="friend-search"
+          autoComplete="off"
           type="email" placeholder="友達のメールアドレスを入力" 
           value={friendEmail} onChange={e => setFriendEmail(e.target.value)}
           style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}

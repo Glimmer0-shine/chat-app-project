@@ -67,8 +67,11 @@ const Profile = ({ session, onBack }) => {
         </div>
 
         <div style={{ marginBottom: '20px', textAlign: 'left' }}>
-          <label style={styles.label}>表示名（ニックネーム）</label>
+          <label htmlFor="nickname" style={styles.label}>表示名（ニックネーム）</label>
           <input 
+            id="nickname"
+            name="nickname"
+            autoComplete="name"
             type="text"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}

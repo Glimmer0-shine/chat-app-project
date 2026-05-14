@@ -139,7 +139,7 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
   return (
     <div style={{ padding: '10px' }}>
       <div style={styles.uploadBox}>
-        <input type="file" id="doc-upload" onChange={uploadFile} disabled={uploading} style={{ display: 'none' }} />
+        <input id="doc-upload" name="document-upload" type="file" onChange={uploadFile} disabled={uploading} style={{ display: 'none' }} />
         <label htmlFor="doc-upload" style={styles.uploadLabel}>
           {uploading ? '⌛ アップロード中...' : '➕ ファイルを共有する'}
         </label>
