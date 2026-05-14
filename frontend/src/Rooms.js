@@ -125,6 +125,9 @@ const Rooms = ({ session, onSelectRoom }) => {
           <div style={modalStyle}>
             <h4>新しいグループを作成</h4>
             <input 
+              id="new-group-name"
+              name="groupName"
+              autoComplete="off"
               value={newGroupName} 
               onChange={(e) => setNewGroupName(e.target.value)} 
               placeholder="グループ名を入力"

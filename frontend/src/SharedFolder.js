@@ -144,7 +144,7 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
     <div style={{ padding: '10px' }}>
       <div style={styles.uploadBox}>
         <input 
-          type="file" accept="image/*" id="file-upload"
+           id="file-upload" name="image-upload" type="file" accept="image/*"
           onChange={uploadImage} disabled={uploading} style={{ display: 'none' }}
         />
         <label htmlFor="file-upload" style={styles.uploadLabel}>

@@ -29,6 +29,9 @@ const Auth = () => {
       <h2>{isRegister ? 'ユーザー登録' : 'ログイン'}</h2>
       <form onSubmit={handleAuth}>
         <input
+          id="auth-email"
+          name="email"
+          autoComplete="email"
           type="email"
           placeholder="メールアドレス"
           value={email}
@@ -36,6 +39,9 @@ const Auth = () => {
           required
         /><br />
         <input
+          id="auth-password"
+          name="password"
+          autoComplete={isRegister ? "new-password" : "current-password"}
           type="password"
           placeholder="パスワード"
           value={password}

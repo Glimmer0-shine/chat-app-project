@@ -34,40 +34,46 @@ const Calendar = ({ session, roomId }) => {
   }, [roomId]);
 
   useEffect(() => {
-    // 最初のデータ取得
+    // 1. 最初のデータ取得
     fetchEvents();
 
-    // リアルタイム監視の設定
+    // 2. リアルタイム監視の設定
     const channel = supabase
-      .channel('realtime-events') // チャンネル名は何でもOK
+      .channel(`calendar-${roomId}`) // ルームごとにユニークな名前
       .on(
         'postgres_changes',
         {
-          event: '*', // INSERT, UPDATE, DELETE すべて監視
+          event: '*', 
           schema: 'public',
           table: 'events',
-          filter: `room_id=eq.${roomId}` // 今見ている部屋のデータだけ
-        },(payload) => {
+          filter: `room_id=eq.${roomId}`
+        },
+        (payload) => {
+          console.log("リアルタイムイベント受信:", payload.eventType, payload);
+          
           if (payload.eventType === 'INSERT') {
-            setEvents((prev) => [...prev, payload.new]);
-          } else if (payload.eventType === 'DELETE') {
-            // 削除されたIDを除外してステートを更新
+            setEvents((prev) => {
+              // ★二重登録防止：すでに同じIDがあれば追加しない
+              if (prev.some(e => e.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          } 
+          else if (payload.eventType === 'DELETE') {
+            // ★削除対応：payload.old.id を使用
             setEvents((prev) => prev.filter(e => e.id !== payload.old.id));
-          } else if (payload.eventType === 'UPDATE') {
+          } 
+          else if (payload.eventType === 'UPDATE') {
             setEvents((prev) => prev.map(e => e.id === payload.new.id ? payload.new : e));
           }
-        })
-      //   () => {
-      //     console.log("カレンダー更新検知！再取得します。");
-      //     fetchEvents(); // 変更があったら再読み込み
-      //   }
-      // )
+        }
+      )
       .subscribe();
 
-    // クリーンアップ（画面を閉じる時に監視を止める）
+    // 3. クリーンアップ
     return () => {
       supabase.removeChannel(channel);
     };
+    // ★fetchEvents を依存配列から外すか、useCallbackで囲ったものを使用してください
   }, [roomId, fetchEvents]);
 
   // --- ヘルパー関数 ---
@@ -188,8 +194,8 @@ const Calendar = ({ session, roomId }) => {
           {/* 追加フォーム */}
           <div style={addFormContainerStyle}>
             <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={inputStyle} />
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="予定タイトル" style={{ ...inputStyle, flex: 1 }} />
+              <input id="event-time" name="event-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} style={inputStyle} />
+              <input id="event-title" name="event-title" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="予定タイトル" style={{ ...inputStyle, flex: 1 }} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
