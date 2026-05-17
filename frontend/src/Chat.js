@@ -226,6 +226,51 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     if (!error) setMessage('');
   };
 
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // 1. ファイル名の準備（重複を避けるためにランダムな値を付加）
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+    const filePath = `${roomId}/${fileName}`;
+
+    try {
+      // 2. Storage（chat-attachmentsバケット）へアップロード
+      const { error: uploadError } = await supabase.storage
+        .from('chat-attachments')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // 3. 公開URLを取得
+      const { data: { publicUrl } } = supabase.storage
+        .from('chat-attachments')
+        .getPublicUrl(filePath);
+
+      // 4. ファイルの種類を判定
+      const type = file.type.startsWith('image/') ? 'image' : 'document';
+
+      // 5. messagesテーブルにインサート
+      const { error: insertError } = await supabase
+        .from('messages')
+        .insert([{
+          room_id: roomId,
+          user: session.user.email,
+          text: file.name, // プレビュー用にファイル名を入れる
+          file_url: publicUrl,
+          file_type: type,
+          is_system: false
+        }]);
+
+      if (insertError) throw insertError;
+
+    } catch (error) {
+      console.error('Error uploading file:', error.message);
+      alert('アップロード中にエラーが発生しました。');
+    }
+  };
+
   const subTabButtonStyle = (isActive) => ({
     flex: 1, padding: '10px 0', cursor: 'pointer', border: 'none', background: 'none',
     fontSize: '0.85rem', color: isActive ? '#007bff' : '#888',
@@ -355,13 +400,45 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
                       display: 'inline-block', padding: '8px 14px', borderRadius: '18px', 
                       backgroundColor: isMe ? '#007bff' : '#fff', color: isMe ? 'white' : 'black',
                       maxWidth: '80%', textAlign: 'left', boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
-                    }}>{msg.text}</div>
+                    }}>
+                      {msg.file_url ? (
+                        msg.file_type === 'image' ? (
+                          // 画像の場合
+                          <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
+                            <img 
+                              src={msg.file_url} 
+                              alt="uploaded" 
+                              style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', cursor: 'pointer', display: 'block' }} 
+                            />
+                          </a>
+                        ) : (
+                          // ドキュメントの場合
+                          <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : '#007bff', textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span>📄</span>
+                            <span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
+                          </a>
+                        )
+                      ) : (
+                        // 通常のテキストメッセージ（既存の表示）
+                        <span>{msg.text}</span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
             {myStatus === 'joined' ? (
               <div style={{ padding: '10px', backgroundColor: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
+                {/* 📎 クリップボタン（実際のinputは隠してlabelで叩く） */}
+                <label htmlFor="file-upload" style={{ cursor: 'pointer', padding: '0 10px', fontSize: '1.4rem' }}>
+                  📎
+                </label>
+                <input 
+                  id="file-upload" 
+                  type="file" 
+                  style={{ display: 'none' }} 
+                  onChange={handleFileUpload} 
+                />
                 <input
                   id="chat-message"
                   name="message"
