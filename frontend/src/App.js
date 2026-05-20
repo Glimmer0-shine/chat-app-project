@@ -63,20 +63,6 @@ function App() {
     }
   }, []);
 
-  // useEffect(() => {
-  //   if (session?.user) {
-  //     const fetchMyProfile = async () => {
-  //       const { data } = await supabase
-  //         .from('profiles')
-  //         .select('display_name')
-  //         .eq('id', session.user.id)
-  //         .single();
-  //       if (data) setMyDisplayName(data.display_name || '');
-  //     };
-  //     fetchMyProfile();
-  //   }
-  // }, [session, showProfile]);
-
   // --- 5. useEffect 4: 状態が変わるたびに localStorage に保存 ---
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
@@ -86,9 +72,11 @@ function App() {
   }, [activeTab, currentChatFriend, currentChatRoomId, showProfile]);
 
   const handleStartChat = (friendEmail, roomId = null) => {
+    // friendEmailは1対1の場合のみ、roomIdはグループと1対1両方で使う
     setCurrentChatFriend(friendEmail);
-    setCurrentChatRoomId(roomId); // roomIdがあればセット
+    setCurrentChatRoomId(roomId); 
     setShowProfile(false);
+    // トーク一覧から選んだ場合は、タブを「トーク」のままにしておきたいので activeTab は変えない
   };
 
   const handleLogout = () => supabase.auth.signOut();

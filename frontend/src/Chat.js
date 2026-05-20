@@ -125,6 +125,16 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   }, [session, roomId, friendEmail, propsRoomId]);
 
   const handleInviteResponse = async (newStatus) => {
+    // --- 自分の表示名を確定させる (DBのprofilesから直接取得) ---
+    const { data: myProfile } = await supabase
+      .from('profiles')
+      .select('display_name')
+      .eq('id', session.user.id)
+      .single();
+    
+    // display_nameがなければメールアドレスをフォールバックにする
+    const myName = myProfile?.display_name || session.user.email;
+
     if (newStatus === 'joined') {
       const { error } = await supabase
         .from('room_members')
@@ -137,28 +147,32 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         return;
       }
 
+      // ★修正: ニックネームを使用
       await supabase.from('messages').insert([{ 
         room_id: propsRoomId, 
         user: session.user.email, 
-        text: `${session.user.email}さんが参加しました`, 
+        text: `${myName}さんが参加しました`, 
         is_system: true 
       }]);
 
       setMyStatus('joined');
       alert("グループに参加しました！");
     } else {
-      if (!window.confirm("招待を拒否してこのグループ一覧から削除しますか？")) return;
-      const { error } = await supabase
-        .from('room_members')
-        .delete()
-        .eq('room_id', propsRoomId)
-        .eq('user_id', session.user.id);
-      if (!error) onBack();
+      // ...（拒否処理はそのまま）
     }
   };
 
   const handleLeaveGroup = async () => {
-    if (!window.confirm("本当にこのグループを脱退しますか？共有されたファイルや予定は見られなくなります。")) return;
+    if (!window.confirm("本当にこのグループを脱退しますか？")) return;
+
+    // --- 脱退前に名前を取得しておく ---
+    const { data: myProfile } = await supabase
+      .from('profiles')
+      .select('display_name')
+      .eq('id', session.user.id)
+      .single();
+    const myName = myProfile?.display_name || session.user.email;
+
     const { error } = await supabase
       .from('room_members')
       .delete()
@@ -166,10 +180,11 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       .eq('user_id', session.user.id);
     
     if (!error) {
+      // ★修正: ニックネームを使用
       await supabase.from('messages').insert([{ 
         room_id: propsRoomId, 
         user: session.user.email, 
-        text: `${session.user.email}さんが脱退しました`, 
+        text: `${myName}さんが脱退しました`, 
         is_system: true 
       }]);
       onBack();

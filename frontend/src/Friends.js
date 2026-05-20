@@ -89,6 +89,72 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     if (!error) fetchFriends();
   };
 
+  // --- 追加：トーク開始時のルーム作成ロジック ---
+  const handleTalkClick = async (friendEmail) => {
+    setLoading(true);
+    try {
+      // 1. 相手のプロフィールIDを取得
+      const { data: friendProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', friendEmail)
+        .single();
+
+      if (!friendProfile) {
+        alert("相手のプロフィールが見つかりません");
+        return;
+      }
+
+      // 2. すでにこの相手との1対1ルームが存在するかチェック
+      const { data: existingMembers } = await supabase
+        .from('room_members')
+        .select('room_id')
+        .eq('user_id', session.user.id);
+
+      let existingRoomId = null;
+      if (existingMembers && existingMembers.length > 0) {
+        const myRoomIds = existingMembers.map(m => m.room_id);
+        const { data: commonRoom } = await supabase
+          .from('room_members')
+          .select('room_id')
+          .in('room_id', myRoomIds)
+          .eq('user_id', friendProfile.id)
+          .maybeSingle();
+        
+        if (commonRoom) existingRoomId = commonRoom.room_id;
+      }
+
+      let finalRoomId = existingRoomId;
+
+      // 3. ルームがなければ新規作成
+      if (!existingRoomId) {
+        const { data: newRoom, error: roomError } = await supabase
+          .from('rooms')
+          .insert([{ name: '1on1' }])
+          .select()
+          .single();
+
+        if (roomError) throw roomError;
+        finalRoomId = newRoom.id;
+
+        // 自分と相手を登録
+        await supabase.from('room_members').insert([
+          { room_id: finalRoomId, user_id: session.user.id, status: 'joined' },
+          { room_id: finalRoomId, user_id: friendProfile.id, status: 'joined' }
+        ]);
+      }
+
+      // 4. 親(App.js)の handleStartChat を呼び出す
+      onStartChat(friendEmail, finalRoomId);
+
+    } catch (err) {
+      console.error(err);
+      alert("トークの開始に失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{ padding: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #007bff', marginBottom: '15px' }}>
@@ -135,7 +201,13 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
                 </span>
               </div>
               <div>
-                <button onClick={() => onStartChat(f.friend_email)} style={{ marginRight: '8px', padding: '5px 12px', cursor: 'pointer' }}>トーク</button>
+                <button 
+                  onClick={() => handleTalkClick(f.friend_email)} 
+                  disabled={loading}
+                  style={{ marginRight: '8px', padding: '5px 12px', cursor: 'pointer' }}
+                >
+                  トーク
+                </button>
                 <button onClick={() => deleteFriend(f.id)} style={{ padding: '5px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>削除</button>
               </div>
             </li>
