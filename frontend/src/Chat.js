@@ -52,8 +52,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   
   useEffect(() => {
     const fetchChatInfo = async () => {
+      // 1. 自分のステータス取得
       if (propsRoomId && session?.user?.id) {
-        // 自分のステータス取得
         const { data: memberData } = await supabase
           .from('room_members')
           .select('status')
@@ -65,15 +65,44 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         setMyStatus('joined');
       }
 
+      // 2. 表示名の決定 (Rooms.js の成功ロジックを反映)
       if (propsRoomId) {
-        const { data } = await supabase.from('rooms').select('name').eq('id', propsRoomId).single();
-        if (data) setFriendDisplayName(data.name);
+        const { data: roomData } = await supabase
+          .from('rooms')
+          .select('name')
+          .eq('id', propsRoomId)
+          .single();
 
+        if (roomData) {
+          // '1on1' という名前なら個人チャットとして相手を探す
+          if (roomData.name === '1on1') {
+            // Rooms.js と同じ RPC 関数を使用してメンバーを取得
+            const { data: members, error: rpcError } = await supabase
+              .rpc('get_room_members', { p_room_id: propsRoomId });
+
+            if (!rpcError && members) {
+              // 自分以外のメンバーを抽出
+              const opponent = members.find(u => u.user_id !== session.user.id);
+              if (opponent && opponent.profiles) {
+                setFriendDisplayName(opponent.profiles.display_name || opponent.profiles.email);
+              } else {
+                setFriendDisplayName(friendEmail || "トーク相手");
+              }
+            }
+          } else {
+            // グループチャットならそのままルーム名を表示
+            setFriendDisplayName(roomData.name);
+          }
+        }
         fetchMembers();
-
       } else if (friendEmail) {
-        const { data } = await supabase.from('profiles').select('display_name').eq('email', friendEmail).single();
-        if (data) setFriendDisplayName(data.display_name || '');
+        // 連絡帳から（roomIdがない場合）のフォールバック
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('display_name')
+          .eq('email', friendEmail)
+          .single();
+        if (prof) setFriendDisplayName(prof.display_name || friendEmail);
       }
     };
     fetchChatInfo();
