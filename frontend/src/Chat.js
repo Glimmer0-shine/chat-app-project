@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import SharedFolder from './SharedFolder';
 import SharedDocuments from './SharedDocuments';
 import Calendar from './Calendar';
+import { theme, commonStyles } from './theme';
 
 const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   const [subTab, setSubTab] = useState('chat');
@@ -315,50 +316,41 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     }
   };
 
+  // --- 4. スタイルヘルパー (isActiveを使うためここへ) ---
   const subTabButtonStyle = (isActive) => ({
     flex: 1, padding: '10px 0', cursor: 'pointer', border: 'none', background: 'none',
-    fontSize: '0.85rem', color: isActive ? '#007bff' : '#888',
-    borderBottom: isActive ? '2px solid #007bff' : '2px solid transparent',
+    fontSize: '0.85rem', color: isActive ? theme.colors.primary : theme.colors.textSub,
+    borderBottom: isActive ? `2px solid ${theme.colors.primary}` : '2px solid transparent',
     transition: '0.2s', fontWeight: isActive ? 'bold' : 'normal'
   });
 
+  // --- 5. JSX部分 ---
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      <div style={{ display: 'flex', alignItems: 'center', padding: '10px 15px', borderBottom: '1px solid #eee', backgroundColor: '#fff' }}>
-        {/* 戻るボタン */}
-        <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', marginRight: '10px' }}>←</button>
-        
-        {/* グループ名と人数 */}
+      <header style={styles.header}>
+        <button onClick={onBack} style={styles.backBtn}>←</button>
         <div style={{ flex: 1 }}>
-          <div 
-            style={{ fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }} 
-            onClick={() => fetchMembers(true)}
-          >
+          <div style={styles.titleContainer} onClick={() => fetchMembers(true)}>
             <span>{friendDisplayName || friendEmail}</span>
-            {memberCount > 0 && (
-              <span style={{ fontSize: '0.85rem', color: '#666', fontWeight: 'normal' }}>
-                ({memberCount})
-              </span>
-            )}
+            {memberCount > 0 && <span style={styles.countText}>({memberCount})</span>}
           </div>
         </div>
-
-        {/* 招待・脱退ボタン（条件に合致する場合のみ表示） */}
         {propsRoomId && myStatus === 'joined' && (
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={openInviteModal} style={styles.headerBtn}>＋招待</button>
-            <button onClick={handleLeaveGroup} style={{...styles.headerBtn, color: '#dc3545'}}>脱退</button>
+            <button onClick={handleLeaveGroup} style={{...styles.headerBtn, color: theme.colors.error}}>脱退</button>
           </div>
         )}
-      </div>
+      </header>
 
+      {/* メンバー一覧モーダル */}
       {isMemberListOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
-            <h3 style={{ fontSize: '1rem', marginBottom: '15px' }}>メンバー一覧</h3>
+            <h3 style={styles.modalTitle}>メンバー一覧</h3>
             <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
               {members.map((m, i) => (
-                <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between' }}>
+                <div key={i} style={styles.memberRow}>
                   <span>{m.profiles?.display_name || m.profiles?.email}</span>
                   <span style={{ fontSize: '0.7rem', color: m.status === 'joined' ? 'green' : 'orange' }}>
                     {m.status === 'joined' ? '参加中' : '招待中'}
@@ -366,23 +358,20 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
                 </div>
               ))}
             </div>
-            <button onClick={() => setIsMemberListOpen(false)} style={{ ...styles.cancelBtn, marginTop: '15px', width: '100%' }}>閉じる</button>
+            <button onClick={() => setIsMemberListOpen(false)} style={styles.modalCloseBtn}>閉じる</button>
           </div>
         </div>
       )}
 
+      {/* 招待モーダル */}
       {isInviteModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
-            <h3 style={{ fontSize: '1rem', marginBottom: '15px' }}>友達を一括招待</h3>
+            <h3 style={styles.modalTitle}>友達を一括招待</h3>
             <div style={{ maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', textAlign: 'left' }}>
               {friendsList.map(friend => (
                 <label key={friend.id} style={styles.friendItem}>
-                  <input 
-                    id={`invite-check-${friend.id}`} // ループ内なのでユニークなIDを付与
-                    name="invite-friend"
-                    type="checkbox" 
-                    checked={selectedFriends.includes(friend.id)}
+                  <input id={`invite-check-${friend.id}`} name="invite-friend" type="checkbox" checked={selectedFriends.includes(friend.id)}
                     onChange={(e) => {
                       if (e.target.checked) setSelectedFriends([...selectedFriends, friend.id]);
                       else setSelectedFriends(selectedFriends.filter(id => id !== friend.id));
@@ -393,26 +382,26 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
               ))}
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={executeInvite} style={styles.inviteSubmitBtn} disabled={!selectedFriends.length}>招待を送る</button>
-              <button onClick={() => {setIsInviteModalOpen(false); setSelectedFriends([]);}} style={styles.cancelBtn}>中止</button>
+              <button onClick={executeInvite} style={{...commonStyles.button, flex: 1}} disabled={!selectedFriends.length}>招待を送る</button>
+              <button onClick={() => {setIsInviteModalOpen(false); setSelectedFriends([]);}} style={{...styles.cancelBtn, flex: 1}}>中止</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* 招待バナー */}
       {myStatus === 'pending' && (
-        <div style={{ backgroundColor: '#fff9db', padding: '15px', textAlign: 'center', borderBottom: '1px solid #ffe066' }}>
-          <p style={{ fontSize: '0.85rem', margin: '0 0 10px 0', color: '#856404' }}>
-            このグループに招待されています。
-          </p>
+        <div style={styles.inviteBanner}>
+          <p style={{ fontSize: '0.85rem', margin: '0 0 10px 0', color: '#856404' }}>グループに招待されています。</p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-            <button onClick={() => handleInviteResponse('joined')} style={{ backgroundColor: '#28a745', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' }}>参加する</button>
-            <button onClick={() => handleInviteResponse('rejected')} style={{ backgroundColor: '#dc3545', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' }}>拒否する</button>
+            <button onClick={() => handleInviteResponse('joined')} style={styles.joinBtn}>参加する</button>
+            <button onClick={() => handleInviteResponse('rejected')} style={styles.rejectBtn}>拒否する</button>
           </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', backgroundColor: '#fff', borderBottom: '1px solid #eee' }}>
+      {/* サブタブ */}
+      <div style={{ display: 'flex', backgroundColor: '#fff', borderBottom: `1px solid ${theme.colors.border}` }}>
         <button onClick={() => setSubTab('chat')} style={subTabButtonStyle(subTab === 'chat')}>トーク</button>
         {myStatus === 'joined' && (
           <>
@@ -423,47 +412,40 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         )}
       </div>
 
+      {/* コンテンツエリア */}
       <div style={{ flex: 1, overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {subTab === 'chat' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div style={{ flex: 1, overflowY: 'auto', backgroundColor: '#f0f2f5', padding: '15px' }}>
+            <div style={styles.chatArea}>
               {chatLog.map((msg, i) => {
                 if (msg.is_system) {
                   return (
-                    <div key={msg.id || i} style={{ textAlign: 'center', margin: '15px 0' }}>
-                      <span style={{ backgroundColor: '#d1d5db', color: '#4b5563', padding: '3px 12px', borderRadius: '12px', fontSize: '0.7rem' }}>{msg.text}</span>
+                    <div key={msg.id || i} style={styles.systemMsgContainer}>
+                      <span style={styles.systemMsgBadge}>{msg.text}</span>
                     </div>
                   );
                 }
                 const isMe = msg.user === session.user.email;
-                const senderName = msg.profiles?.display_name || msg.user;
                 return (
                   <div key={msg.id || i} style={{ textAlign: isMe ? 'right' : 'left', marginBottom: '15px' }}>
-                    {!isMe && <div style={{ fontSize: '0.65rem', color: '#888', marginLeft: '5px', marginBottom: '2px' }}>{senderName}</div>}
+                    {!isMe && <div style={styles.senderName}>{msg.profiles?.display_name || msg.user}</div>}
                     <div style={{ 
-                      display: 'inline-block', padding: '8px 14px', borderRadius: '18px', 
-                      backgroundColor: isMe ? '#007bff' : '#fff', color: isMe ? 'white' : 'black',
-                      maxWidth: '80%', textAlign: 'left', boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
+                      ...styles.bubble, 
+                      backgroundColor: isMe ? theme.colors.primary : '#fff', 
+                      color: isMe ? 'white' : 'black',
+                      boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
                     }}>
                       {msg.file_url ? (
                         msg.file_type === 'image' ? (
-                          // 画像の場合
                           <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
-                            <img 
-                              src={msg.file_url} 
-                              alt="uploaded" 
-                              style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', cursor: 'pointer', display: 'block' }} 
-                            />
+                            <img src={msg.file_url} alt="uploaded" style={styles.attachedImg} />
                           </a>
                         ) : (
-                          // ドキュメントの場合
-                          <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : '#007bff', textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <span>📄</span>
-                            <span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
+                          <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : theme.colors.primary, textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span>📄</span><span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
                           </a>
                         )
                       ) : (
-                        // 通常のテキストメッセージ（既存の表示）
                         <span>{msg.text}</span>
                       )}
                     </div>
@@ -471,34 +453,20 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
                 );
               })}
             </div>
+            
+            {/* メッセージ入力 */}
             {myStatus === 'joined' ? (
-              <div style={{ padding: '10px', backgroundColor: '#fff', borderTop: '1px solid #eee', display: 'flex', gap: '10px' }}>
-                {/* 📎 クリップボタン（実際のinputは隠してlabelで叩く） */}
-                <label htmlFor="file-upload" style={{ cursor: 'pointer', padding: '0 10px', fontSize: '1.4rem' }}>
-                  📎
-                </label>
-                <input 
-                  id="file-upload" 
-                  type="file" 
-                  style={{ display: 'none' }} 
-                  onChange={handleFileUpload} 
-                />
-                <input
-                  id="chat-message"
-                  name="message"
-                  autoComplete="off"
-                  style={{ flex: 1, padding: '10px', borderRadius: '20px', border: '1px solid #ddd', outline: 'none' }}
-                  placeholder="メッセージを入力"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+              <div style={styles.inputArea}>
+                <label htmlFor="file-upload" style={styles.clipBtn}>📎</label>
+                <input id="file-upload" type="file" style={{ display: 'none' }} onChange={handleFileUpload} />
+                <input id="chat-message" name="message" autoComplete="off" style={styles.chatInput} placeholder="メッセージを入力"
+                  value={message} onChange={(e) => setMessage(e.target.value)}
                   onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.key === 'Enter') sendMessage(); }}
                 />
-                <button onClick={sendMessage} style={{ backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' }}>▲</button>
+                <button onClick={sendMessage} style={styles.sendBtn}>▲</button>
               </div>
             ) : (
-              <div style={{ padding: '15px', textAlign: 'center', color: '#888', fontSize: '0.8rem', backgroundColor: '#eee' }}>
-                参加するとメッセージを送信できるようになります
-              </div>
+              <div style={styles.lockedInputArea}>参加するとメッセージを送信できるようになります</div>
             )}
           </div>
         )}
@@ -514,13 +482,34 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   );
 };
 
+// --- 6. スタイル定義 ---
 const styles = {
-  headerBtn: { padding: '5px 10px', fontSize: '0.75rem', backgroundColor: '#f8f9fa', border: '1px solid #ddd', borderRadius: '5px', cursor: 'pointer' },
+  header: { display: 'flex', alignItems: 'center', padding: '10px 15px', borderBottom: `1px solid ${theme.colors.border}`, backgroundColor: '#fff' },
+  backBtn: { background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', marginRight: '10px' },
+  titleContainer: { fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' },
+  countText: { fontSize: '0.85rem', color: theme.colors.textSub, fontWeight: 'normal' },
+  headerBtn: { padding: '5px 10px', fontSize: '0.75rem', backgroundColor: '#f8f9fa', border: `1px solid ${theme.colors.border}`, borderRadius: '5px', cursor: 'pointer' },
   modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '85%', maxWidth: '300px', textAlign: 'center' },
-  friendItem: { display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #eee', cursor: 'pointer' },
-  inviteSubmitBtn: { flex: 1, backgroundColor: '#007bff', color: '#fff', border: 'none', padding: '10px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
-  cancelBtn: { flex: 1, backgroundColor: '#6c757d', color: '#fff', border: 'none', padding: '10px', borderRadius: '5px', cursor: 'pointer' },
+  modalTitle: { fontSize: '1rem', marginBottom: '15px' },
+  memberRow: { padding: '8px 0', borderBottom: `1px solid ${theme.colors.border}`, display: 'flex', justifyContent: 'space-between' },
+  modalCloseBtn: { ...commonStyles.button, marginTop: '15px', width: '100%', backgroundColor: '#6c757d' },
+  friendItem: { display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}`, cursor: 'pointer' },
+  cancelBtn: { backgroundColor: '#6c757d', color: '#fff', border: 'none', padding: '10px', borderRadius: '5px', cursor: 'pointer' },
+  inviteBanner: { backgroundColor: '#fff9db', padding: '15px', textAlign: 'center', borderBottom: '1px solid #ffe066' },
+  joinBtn: { backgroundColor: '#28a745', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
+  rejectBtn: { backgroundColor: theme.colors.error, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
+  chatArea: { flex: 1, overflowY: 'auto', backgroundColor: '#f0f2f5', padding: '15px' },
+  systemMsgContainer: { textAlign: 'center', margin: '15px 0' },
+  systemMsgBadge: { backgroundColor: '#d1d5db', color: '#4b5563', padding: '3px 12px', borderRadius: '12px', fontSize: '0.7rem' },
+  senderName: { fontSize: '0.65rem', color: '#888', marginLeft: '5px', marginBottom: '2px' },
+  bubble: { display: 'inline-block', padding: '8px 14px', borderRadius: '18px', maxWidth: '80%', textAlign: 'left' },
+  attachedImg: { maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', cursor: 'pointer', display: 'block' },
+  inputArea: { padding: '10px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}`, display: 'flex', gap: '10px', alignItems: 'center' },
+  clipBtn: { cursor: 'pointer', padding: '0 5px', fontSize: '1.4rem' },
+  chatInput: { flex: 1, padding: '10px', borderRadius: '20px', border: `1px solid ${theme.colors.border}`, outline: 'none' },
+  sendBtn: { backgroundColor: theme.colors.primary, color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' },
+  lockedInputArea: { padding: '15px', textAlign: 'center', color: theme.colors.textSub, fontSize: '0.8rem', backgroundColor: '#eee' }
 };
 
 export default Chat;

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { theme } from './theme';
 
 const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
@@ -136,11 +137,13 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
     return data.publicUrl;
   };
 
+  const formatFileName = (name) => name.includes('_') ? name.split('_').slice(1).join('_') : name;
+
   return (
     <div style={{ padding: '10px' }}>
       <div style={styles.uploadBox}>
         <input id="doc-upload" name="document-upload" type="file" onChange={uploadFile} disabled={uploading} style={{ display: 'none' }} />
-        <label htmlFor="doc-upload" style={styles.uploadLabel}>
+        <label htmlFor="doc-upload" style={{ ...styles.uploadLabel, color: uploading ? theme.colors.textSub : '#28a745' }}>
           {uploading ? '⌛ アップロード中...' : '➕ ファイルを共有する'}
         </label>
       </div>
@@ -153,17 +156,13 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
             <div key={file.id} style={styles.fileItem}>
               <div style={styles.fileInfo}>
                 <span style={{ marginRight: '10px' }}>📄</span>
-                <a 
-                  href={getDownloadUrl(file.name)} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  style={styles.fileName}
-                >
-                  {/* タイムスタンプ部分を除去して表示 */}
-                  {file.name.includes('_') ? file.name.split('_').slice(1).join('_') : file.name}
+                <a href={getDownloadUrl(file.name)} target="_blank" rel="noopener noreferrer" style={styles.fileName}>
+                  {formatFileName(file.name)}
                 </a>
               </div>
-              <button onClick={() => deleteFile(file.name)} style={styles.deleteBtn}>削除</button>
+              <button onClick={() => deleteFile(file.name)} style={styles.deleteBtn}>
+                削除
+              </button>
             </div>
           ))
         )}
@@ -173,14 +172,26 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
 };
 
 const styles = {
-  uploadBox: { marginBottom: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px', textAlign: 'center', border: '1px solid #ddd' },
-  uploadLabel: { cursor: 'pointer', color: '#28a745', fontWeight: 'bold', display: 'block' },
+  uploadBox: { 
+    marginBottom: '20px', padding: '15px', backgroundColor: '#f8f9fa', 
+    borderRadius: '8px', textAlign: 'center', border: `1px solid ${theme.colors.border}` 
+  },
+  uploadLabel: { cursor: 'pointer', fontWeight: 'bold', display: 'block' },
   list: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  fileItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', backgroundColor: 'white', borderRadius: '5px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+  fileItem: { 
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', 
+    backgroundColor: 'white', borderRadius: '5px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' 
+  },
   fileInfo: { display: 'flex', alignItems: 'center', flex: 1, overflow: 'hidden' },
-  fileName: { color: '#007bff', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  deleteBtn: { marginLeft: '10px', padding: '4px 8px', backgroundColor: '#ff4d4f', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' },
-  empty: { textAlign: 'center', color: '#999', marginTop: '20px' }
+  fileName: { 
+    color: theme.colors.primary, textDecoration: 'none', whiteSpace: 'nowrap', 
+    overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.9rem' 
+  },
+  deleteBtn: { 
+    marginLeft: '10px', padding: '4px 10px', backgroundColor: theme.colors.error, 
+    color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' 
+  },
+  empty: { textAlign: 'center', color: theme.colors.textSub, marginTop: '20px', fontSize: '0.9rem' }
 };
 
 export default SharedDocuments;

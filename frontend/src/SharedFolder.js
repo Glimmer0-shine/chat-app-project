@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { theme } from './theme';
 
 // roomId (グループ用) を追加で受け取れるように変更
 const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
@@ -143,11 +144,8 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
   return (
     <div style={{ padding: '10px' }}>
       <div style={styles.uploadBox}>
-        <input 
-           id="file-upload" name="image-upload" type="file" accept="image/*"
-          onChange={uploadImage} disabled={uploading} style={{ display: 'none' }}
-        />
-        <label htmlFor="file-upload" style={styles.uploadLabel}>
+        <input id="file-upload" name="image-upload" type="file" accept="image/*" onChange={uploadImage} disabled={uploading} style={{ display: 'none' }} />
+        <label htmlFor="file-upload" style={{ ...styles.uploadLabel, color: uploading ? theme.colors.textSub : theme.colors.primary }}>
           {uploading ? '⌛ アップロード中...' : '📷 写真を追加する'}
         </label>
       </div>
@@ -160,15 +158,8 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
         ) : (
           images.map((img) => (
             <div key={img.id} style={styles.imageWrapper}>
-              <img 
-                src={getImageUrl(img.name)} 
-                alt={img.name} 
-                style={styles.image} 
-              />
-              <button 
-                onClick={() => deleteImage(img.name)}
-                style={styles.deleteBtn}
-              >
+              <img src={getImageUrl(img.name)} alt={img.name} style={styles.image} loading="lazy" />
+              <button onClick={() => deleteImage(img.name)} style={styles.deleteBtn}>
                 ×
               </button>
             </div>
@@ -179,17 +170,22 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
   );
 };
 
+// --- スタイル定義 ---
 const styles = {
   uploadBox: {
     marginBottom: '20px', padding: '20px',
     backgroundColor: '#f1f8ff', borderRadius: '12px',
-    textAlign: 'center', border: '2px dashed #007bff44'
+    textAlign: 'center', border: `2px dashed ${theme.colors.primary}44` // themeの色を透過させて使用
   },
-  uploadLabel: { cursor: 'pointer', color: '#007bff', fontWeight: 'bold', display: 'block' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px' },
+  uploadLabel: { cursor: 'pointer', fontWeight: 'bold', display: 'block' },
+  grid: { 
+    display: 'grid', 
+    gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', 
+    gap: '8px' 
+  },
   imageWrapper: { 
     position: 'relative', width: '100%', aspectRatio: '1/1', 
-    overflow: 'hidden', borderRadius: '8px', backgroundColor: '#eee' 
+    overflow: 'hidden', borderRadius: '8px', backgroundColor: theme.colors.border 
   },
   image: { width: '100%', height: '100%', objectFit: 'cover' },
   deleteBtn: {
@@ -197,9 +193,10 @@ const styles = {
     width: '24px', height: '24px', borderRadius: '50%',
     backgroundColor: 'rgba(0,0,0,0.6)', color: 'white',
     border: 'none', cursor: 'pointer', fontSize: '16px',
-    display: 'flex', alignItems: 'center', justifyContent: 'center'
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    transition: '0.2s'
   },
-  emptyState: { gridColumn: '1/-1', textAlign: 'center', marginTop: '40px', color: '#888' }
+  emptyState: { gridColumn: '1/-1', textAlign: 'center', marginTop: '40px', color: theme.colors.textSub }
 };
 
 export default SharedFolder;
