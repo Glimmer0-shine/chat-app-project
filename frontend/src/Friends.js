@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { theme, commonStyles } from './theme';
 
 const Friends = ({ session, onStartChat, onOpenSettings }) => {
   const [friendEmail, setFriendEmail] = useState('');
@@ -157,7 +158,7 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
 
   return (
     <div style={{ padding: '10px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #007bff', marginBottom: '15px' }}>
+      <div style={styles.headerContainer}>
         <h3 style={{ margin: 0, paddingBottom: '10px' }}>👥 連絡帳</h3>
         <button 
           onClick={onOpenSettings} 
@@ -173,49 +174,73 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
           id="friend-search"
           name="friend-search"
           autoComplete="off"
-          type="email" placeholder="友達のメールアドレスを入力" 
-          value={friendEmail} onChange={e => setFriendEmail(e.target.value)}
-          style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
+          type="email" 
+          placeholder="友達のメールアドレスを入力" 
+          value={friendEmail} 
+          onChange={e => setFriendEmail(e.target.value)}
+          style={{ ...commonStyles.input, flex: 1 }}
         />
-        <button onClick={addFriend} disabled={loading} style={{ padding: '10px 15px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-          {loading ? '検索中...' : '追加'}
+        <button 
+          onClick={addFriend} 
+          disabled={loading} 
+          style={{ ...commonStyles.button, width: 'auto', padding: '10px 15px', backgroundColor: '#C0CDDC', color: '#333' }}
+        >
+          {loading ? '...' : '追加'}
         </button>
       </div>
 
       <ul style={{ listStyle: 'none', padding: 0 }}>
-        {friendsList.length === 0 && <p style={{ color: '#888', textAlign: 'center' }}>友達がまだいません</p>}
-        {friendsList.map(f => {
-          // ★追加: 表示名の判定ロジック
-          const displayName = f.profiles?.display_name;
-
-          return (
-            <li key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 0', borderBottom: '1px solid #eee' }}>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {/* ニックネームがある場合は太字で表示 */}
-                <span style={{ fontWeight: 'bold', fontSize: '1rem' }}>
-                  {displayName || '名前未設定'}
-                </span>
-                {/* メールアドレスを補足として小さく表示 */}
-                <span style={{ fontSize: '0.75rem', color: '#888' }}>
-                  {f.friend_email}
-                </span>
-              </div>
-              <div>
-                <button 
-                  onClick={() => handleTalkClick(f.friend_email)} 
-                  disabled={loading}
-                  style={{ marginRight: '8px', padding: '5px 12px', cursor: 'pointer' }}
-                >
-                  トーク
-                </button>
-                <button onClick={() => deleteFriend(f.id)} style={{ padding: '5px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>削除</button>
-              </div>
-            </li>
-          );
-        })}
+        {friendsList.length === 0 && (
+          <p style={{ color: theme.colors.textSub, textAlign: 'center', marginTop: '20px' }}>友達がまだいません</p>
+        )}
+        {friendsList.map(f => (
+          <li key={f.id} style={styles.friendItem}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: 'bold', fontSize: '1rem', color: theme.colors.textMain }}>
+                {f.profiles?.display_name || '名前未設定'}
+              </span>
+              <span style={{ fontSize: '0.75rem', color: theme.colors.textSub }}>
+                {f.friend_email}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                onClick={() => handleTalkClick(f.friend_email)} 
+                disabled={loading}
+                style={{ ...commonStyles.button, width: 'auto', padding: '5px 12px', fontSize: '0.8rem', backgroundColor: '#06C755', color: 'white' }}
+              >
+                トーク
+              </button>
+              <button 
+                onClick={() => deleteFriend(f.id)} 
+                style={{ ...commonStyles.button, width: 'auto', padding: '5px 12px', fontSize: '0.8rem', backgroundColor: '#dc3545', color: 'white', }}
+              >
+                削除
+              </button>
+            </div>
+          </li>
+        ))}
       </ul>
     </div>
   );
+};
+
+// --- 3. スタイル定義（基準：骨組み・再利用構造のみ） ---
+const styles = {
+  headerContainer: {
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    borderBottom: `2px solid ${theme.colors.primary}`, 
+    marginBottom: '15px'
+  },
+  friendItem: {
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    padding: '15px 0', 
+    borderBottom: `1px solid ${theme.colors.border}`
+  }
 };
 
 export default Friends;

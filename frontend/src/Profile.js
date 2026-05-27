@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { theme, commonStyles } from './theme';
 
 const Profile = ({ session, onBack }) => {
   const [loading, setLoading] = useState(true);
@@ -53,20 +54,20 @@ const Profile = ({ session, onBack }) => {
   if (loading) return <p style={{ textAlign: 'center', marginTop: '50px' }}>読み込み中...</p>;
 
   return (
-    <div style={{ padding: '20px', textAlign: 'center' }}>
-      <button onClick={onBack} style={styles.backBtn}>
-        ← 連絡帳に戻る
-      </button>
+    <div style={styles.container}>
+      <div style={{ textAlign: 'left' }}>
+        <button onClick={onBack} style={styles.backBtn}>← 戻る</button>
+      </div>
 
       <h3 style={styles.header}>⚙️ マイプロフィール</h3>
 
       <div style={styles.card}>
-        <div style={{ marginBottom: '20px' }}>
-          <p style={styles.label}>メールアドレス</p>
+        <div style={styles.infoGroup}>
+          <label style={styles.label}>メールアドレス</label>
           <p style={styles.emailText}>{profile?.email}</p>
         </div>
 
-        <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+        <div style={styles.infoGroup}>
           <label htmlFor="nickname" style={styles.label}>表示名（ニックネーム）</label>
           <input 
             id="nickname"
@@ -75,15 +76,15 @@ const Profile = ({ session, onBack }) => {
             type="text"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="未設定（メールアドレスが表示されます）"
-            style={styles.input}
+            placeholder="未設定"
+            style={commonStyles.input}
           />
         </div>
 
         <button 
           onClick={handleUpdate} 
           disabled={updating}
-          style={{ ...styles.saveBtn, opacity: updating ? 0.6 : 1 }}
+          style={{ ...commonStyles.button, marginTop: '10px', opacity: updating ? 0.6 : 1 }}
         >
           {updating ? '保存中...' : 'プロフィールを保存'}
         </button>
@@ -101,23 +102,20 @@ const Profile = ({ session, onBack }) => {
 };
 
 const styles = {
-  backBtn: { background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', marginBottom: '10px' },
-  header: { borderBottom: '2px solid #007bff', paddingBottom: '10px', marginBottom: '20px' },
-  card: { margin: '20px 0', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '10px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' },
-  label: { color: '#666', fontSize: '0.8rem', marginBottom: '5px', display: 'block' },
-  emailText: { fontSize: '1rem', fontWeight: 'bold', wordBreak: 'break-all' },
-  input: {
-    width: '100%', padding: '10px', marginTop: '5px',
-    borderRadius: '5px', border: '1px solid #ddd', boxSizing: 'border-box'
-  },
-  saveBtn: {
-    marginTop: '10px', padding: '10px', width: '100%',
-    backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold'
-  },
-  dateText: { fontSize: '0.8rem', color: '#888', marginTop: '20px' },
-  logoutBtn: {
-    marginTop: '30px', padding: '10px 20px', width: '100%',
-    backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer'
+  container: { padding: '20px', textAlign: 'center' },
+  backBtn: { background: 'none', border: 'none', color: theme.colors.primary, cursor: 'pointer', marginBottom: '10px', fontSize: '0.9rem' },
+  header: { borderBottom: `2px solid ${theme.colors.primary}`, paddingBottom: '10px', marginBottom: '20px', color: theme.colors.textMain },
+  card: { margin: '20px 0', padding: '20px', backgroundColor: '#fff', borderRadius: '12px', border: `1px solid ${theme.colors.border}`, textAlign: 'left' },
+  infoGroup: { marginBottom: '20px' },
+  label: { color: theme.colors.textSub, fontSize: '0.8rem', marginBottom: '8px', display: 'block', fontWeight: 'bold' },
+  emailText: { fontSize: '1rem', color: theme.colors.textMain, wordBreak: 'break-all', fontWeight: '500' },
+  dateText: { fontSize: '0.8rem', color: theme.colors.textSub, marginTop: '20px' },
+  logoutBtn: { 
+    ...commonStyles.button, 
+    marginTop: '30px', 
+    backgroundColor: 'transparent', 
+    color: theme.colors.error, 
+    border: `1px solid ${theme.colors.error}` 
   }
 };
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { theme, commonStyles } from './theme';
 
 const Rooms = ({ session, onSelectRoom }) => {
   const [rooms, setRooms] = useState([]);
@@ -44,7 +45,7 @@ const Rooms = ({ session, onSelectRoom }) => {
         let opponentEmail = null;
 
         if (!isGroup) {
-          // ★前回作成した RPC 関数 (get_room_members) を呼び出す
+          // ★RPC 関数 (get_room_members) を呼び出す
           const { data: members, error: rpcError } = await supabase
             .rpc('get_room_members', { p_room_id: roomId });
 
@@ -183,84 +184,92 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
   };
 
-  if (loading) return <p style={{ textAlign: 'center', padding: '20px' }}>読み込み中...</p>;
+  if (loading) return <p style={{ textAlign: 'center', padding: '20px', color: theme.colors.textSub }}>読み込み中...</p>;
 
   return (
     <div style={{ padding: '10px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #007bff', paddingBottom: '10px', marginBottom: '15px' }}>
+      <div style={styles.headerContainer}>
         <h3 style={{ margin: 0 }}>💬 トーク一覧</h3>
-        <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}> 
-          <button onClick={() => setIsModalOpen(true)} style={createBtnStyle}>＋作成</button>
-          <button onClick={fetchHiddenRooms} style={secondaryBtnStyle}>非表示</button>
+        <div style={{ display: 'flex', gap: '8px' }}> 
+          <button onClick={() => setIsModalOpen(true)} style={styles.createBtn}>＋作成</button>
+          <button onClick={fetchHiddenRooms} style={styles.secondaryBtn}>非表示</button>
         </div>
       </div>
 
-      {/* --- ルーム一覧 --- */}
       {rooms.map((room) => {
         const isPending = room.isGroup && room.status === 'pending';
         return (
           <div 
             key={room.roomId} 
-            onClick={() => {
-              if (contextMenu.visible) return closeContextMenu();
-              room.isGroup ? onSelectRoom(null, room.roomId) : onSelectRoom(room.opponentEmail, room.roomId);
-            }}
+            onClick={() => contextMenu.visible ? closeContextMenu() : room.isGroup ? onSelectRoom(null, room.roomId) : onSelectRoom(room.opponentEmail, room.roomId)}
             onContextMenu={(e) => handleContextMenu(e, room.roomId)}
             onTouchStart={(e) => handleTouchStart(e, room.roomId)}
             onTouchEnd={handleTouchEnd}
-            style={{ ...roomItemStyle, backgroundColor: '#fff', position: 'relative', userSelect: 'none' }}
+            style={styles.roomItem}
           >        
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontWeight: 'bold' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <span style={{ fontWeight: 'bold', color: theme.colors.textMain }}>
                 {room.isGroup ? `[グループ] ${room.name}` : room.name}
               </span>
-              <span style={{ fontSize: '0.7rem', color: '#999' }}>{room.time}</span>
+              <span style={{ fontSize: '0.7rem', color: theme.colors.textSub }}>{room.time}</span>
             </div>
-            <div style={{ ...lastMsgStyle, color: isPending ? '#007bff' : '#666' }}>
+            <div style={{ 
+              ...styles.lastMsg, 
+              color: isPending ? theme.colors.primary : theme.colors.textSub 
+            }}>
               {room.lastMessage}
             </div>
           </div>
         );
       })}
 
-      {/* --- 各種モーダル・メニュー --- */}
+      {/* モーダル：グループ作成 */}
       {isModalOpen && (
-        <div style={modalOverlayStyle}>
-          <div style={modalStyle}>
-            <h4>新しいグループを作成</h4>
-            <input id="new-group" name="make-new-group" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="グループ名を入力" style={inputStyle} />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-              <button onClick={createGroup} style={confirmBtnStyle}>作成</button>
-              <button onClick={() => setIsModalOpen(false)} style={cancelBtnStyle}>キャンセル</button>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <h4 style={{ marginTop: 0 }}>新しいグループを作成</h4>
+            <input 
+              id="new-group" 
+              name="make-new-group" 
+              value={newGroupName} 
+              onChange={(e) => setNewGroupName(e.target.value)} 
+              placeholder="グループ名を入力" 
+              style={{ ...commonStyles.input, marginBottom: '15px' }} 
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={createGroup} style={{ ...commonStyles.button, backgroundColor: '#28a745' }}>作成</button>
+              <button onClick={() => setIsModalOpen(false)} style={{ ...commonStyles.button, backgroundColor: '#6c757d' }}>キャンセル</button>
             </div>
           </div>
         </div>
       )}
 
+      {/* モーダル：非表示リスト */}
       {isHiddenListOpen && (
-        <div style={modalOverlayStyle}>
-          <div style={{ ...modalStyle, maxHeight: '80%', overflowY: 'auto' }}>
-            <h4 style={{ borderBottom: '1px solid #eee', pb: '10px' }}>非表示中のトーク</h4>
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modalContent, maxHeight: '80%', overflowY: 'auto' }}>
+            <h4 style={{ borderBottom: `1px solid ${theme.colors.border}`, paddingBottom: '10px', marginTop: 0 }}>非表示中のトーク</h4>
             {hiddenRooms.length === 0 ? (
-              <p style={{ fontSize: '0.8rem', color: '#888', padding: '20px' }}>ありません</p>
+              <p style={{ fontSize: '0.8rem', color: theme.colors.textSub, padding: '20px', textAlign: 'center' }}>ありません</p>
             ) : (
               hiddenRooms.map((hr) => (
-                <div key={hr.room_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', borderBottom: '1px solid #f9f9f9' }}>
+                <div key={hr.room_id} style={styles.hiddenRoomItem}>
                   <span style={{ fontSize: '0.9rem' }}>{hr.rooms?.name === '1on1' ? '1対1トーク' : hr.rooms?.name}</span>
-                  <button onClick={() => unhideRoom(hr.room_id)} style={unhideBtnStyle}>再表示</button>
+                  <button onClick={() => unhideRoom(hr.room_id)} style={styles.unhideBtn}>再表示</button>
                 </div>
               ))
             )}
-            <button onClick={() => setIsHiddenListOpen(false)} style={{ ...cancelBtnStyle, width: '100%', marginTop: '15px' }}>閉じる</button>
+            <button onClick={() => setIsHiddenListOpen(false)} style={{ ...commonStyles.button, marginTop: '15px', backgroundColor: '#6c757d' }}>閉じる</button>
           </div>
         </div>
       )}
 
+      {/* コンテキストメニュー */}
       {contextMenu.visible && (
         <>
-          <div onMouseDown={closeContextMenu} onTouchStart={closeContextMenu} style={overlayInvisibleStyle} />
-          <div style={{ ...contextMenuStyle, top: contextMenu.y, right: '20px', position: 'fixed' }}>
-            <div onClick={(e) => hideRoom(e, contextMenu.roomId)} style={contextMenuItemStyle}>トークを非表示</div>
+          <div onMouseDown={closeContextMenu} onTouchStart={closeContextMenu} style={styles.invisibleOverlay} />
+          <div style={{ ...styles.contextMenu, top: contextMenu.y, right: '20px' }}>
+            <div onClick={(e) => hideRoom(e, contextMenu.roomId)} style={styles.contextMenuItem}>トークを非表示</div>
           </div>
         </>
       )}
@@ -269,18 +278,26 @@ const Rooms = ({ session, onSelectRoom }) => {
 };
 
 // --- スタイル定義 ---
-const createBtnStyle = { padding: '5px 12px', fontSize: '0.8rem', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '20px', cursor: 'pointer' };
-const secondaryBtnStyle = { padding: '5px 12px', fontSize: '0.8rem', backgroundColor: '#f0f0f0', color: '#666', border: '1px solid #ccc', borderRadius: '20px', cursor: 'pointer' };
-const modalOverlayStyle = { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 };
-const modalStyle = { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '80%', maxWidth: '400px' };
-const inputStyle = { width: '100%', padding: '10px', boxSizing: 'border-box', borderRadius: '5px', border: '1px solid #ddd' };
-const confirmBtnStyle = { flex: 1, padding: '10px', backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' };
-const cancelBtnStyle = { flex: 1, padding: '10px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' };
-const unhideBtnStyle = { backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 10px', fontSize: '0.75rem', cursor: 'pointer' };
-const roomItemStyle = { padding: '15px', borderBottom: '1px solid #eee', cursor: 'pointer' };
-const lastMsgStyle = { fontSize: '0.85rem', color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
-const overlayInvisibleStyle = { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1000 };
-const contextMenuStyle = { backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1001, minWidth: '150px', overflow: 'hidden' };
-const contextMenuItemStyle = { padding: '12px 20px', fontSize: '0.9rem', cursor: 'pointer', color: '#dc3545', backgroundColor: '#fff' };
+const styles = {
+  headerContainer: {
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    borderBottom: `2px solid ${theme.colors.primary}`, 
+    paddingBottom: '10px', 
+    marginBottom: '15px'
+  },
+  createBtn: { padding: '5px 15px', fontSize: '0.8rem', backgroundColor: theme.colors.primary, color: '#fff', border: 'none', borderRadius: '20px', cursor: 'pointer' },
+  secondaryBtn: { padding: '5px 15px', fontSize: '0.8rem', backgroundColor: '#f0f0f0', color: '#666', border: `1px solid ${theme.colors.border}`, borderRadius: '20px', cursor: 'pointer' },
+  roomItem: { padding: '15px', borderBottom: `1px solid ${theme.colors.border}`, cursor: 'pointer', backgroundColor: '#fff', position: 'relative', userSelect: 'none' },
+  lastMsg: { fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
+  modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '85%', maxWidth: '400px' },
+  hiddenRoomItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}` },
+  unhideBtn: { backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 10px', fontSize: '0.75rem', cursor: 'pointer' },
+  invisibleOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1000 },
+  contextMenu: { position: 'fixed', backgroundColor: '#fff', border: `1px solid ${theme.colors.border}`, borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1001, minWidth: '150px', overflow: 'hidden' },
+  contextMenuItem: { padding: '12px 20px', fontSize: '0.9rem', cursor: 'pointer', color: theme.colors.error }
+};
 
 export default Rooms;

@@ -5,33 +5,18 @@ import Chat from './Chat';
 import Friends from './Friends';
 import Profile from './Profile';
 import Rooms from './Rooms';
+import { theme, commonStyles } from './theme'; // themeをインポート
 
 function App() {
-  // --- 1. ステート定義 (初期値としてlocalStorageを読み込む) ---
+  // --- 1. ステート定義 ---
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'friends');
   const [currentChatFriend, setCurrentChatFriend] = useState(() => localStorage.getItem('currentChatFriend') || null);
   const [currentChatRoomId, setCurrentChatRoomId] = useState(() => localStorage.getItem('currentChatRoomId') || null);
   const [showProfile, setShowProfile] = useState(() => localStorage.getItem('showProfile') === 'true');
-  // const [myDisplayName, setMyDisplayName] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
 
-
-  // 下部タブのスタイル
-  const footerTabStyle = (isActive) => ({
-    flex: 1,
-    padding: '12px 0',
-    cursor: 'pointer',
-    backgroundColor: 'transparent',
-    color: isActive ? '#007bff' : '#888',
-    border: 'none',
-    fontWeight: isActive ? 'bold' : 'normal',
-    fontSize: '0.9rem',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center'
-  });
-
+  // --- 2. useEffect: セッション管理 ---
   useEffect(() => {
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -47,9 +32,8 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- 3. useEffect 2: リロード時の「戻し」処理 (初回のみ) ---
+  // --- 3. useEffect: リロード時の「戻し」処理 ---
   useEffect(() => {
-    // トーク中、またはプロフィール中にリロードされた場合、強制的に一覧画面へ戻す
     const isChatting = localStorage.getItem('currentChatFriend') || localStorage.getItem('currentChatRoomId');
     const isViewingProfile = localStorage.getItem('showProfile') === 'true';
 
@@ -63,7 +47,7 @@ function App() {
     }
   }, []);
 
-  // --- 5. useEffect 4: 状態が変わるたびに localStorage に保存 ---
+  // --- 4. useEffect: localStorage への保存 ---
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
     localStorage.setItem('currentChatFriend', currentChatFriend || '');
@@ -71,31 +55,34 @@ function App() {
     localStorage.setItem('showProfile', showProfile);
   }, [activeTab, currentChatFriend, currentChatRoomId, showProfile]);
 
+  // --- 5. ハンドラー ---
   const handleStartChat = (friendEmail, roomId = null) => {
-    // friendEmailは1対1の場合のみ、roomIdはグループと1対1両方で使う
     setCurrentChatFriend(friendEmail);
     setCurrentChatRoomId(roomId); 
     setShowProfile(false);
-    // トーク一覧から選んだ場合は、タブを「トーク」のままにしておきたいので activeTab は変えない
   };
 
   const handleLogout = () => supabase.auth.signOut();
 
   if (!session) return <Auth />;
 
+  // --- 6. JSX 部分 ---
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f5f5f5' }}>
+    <div style={styles.container}>
       
-      {/* 1. コンテンツ表示エリア (チャット中ならここが全画面) */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#fff' }}>
+      {/* 1. コンテンツ表示エリア */}
+      <div style={styles.contentWrapper}>
         
         {/* チャット中でない場合のみ上部ヘッダーを表示 */}
         {!currentChatFriend && !showProfile && (
-          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 20px', borderBottom: '1px solid #eee' }}>
-            <span style={{ fontSize: '0.9rem', fontFamily: "cursive" }}>
-              🍀Y Talk
-            </span>
-            <button onClick={handleLogout} style={{ padding: '5px 10px', fontSize: '0.8rem' }}>ログアウト</button>
+          <header style={styles.header}>
+            <span style={styles.logo}>🍀Y Talk</span>
+            <button 
+              onClick={handleLogout} 
+              style={{ ...commonStyles.button, padding: '5px 10px', fontSize: '0.8rem', backgroundColor: '#eee', color: '#333' }}
+            >
+              ログアウト
+            </button>
           </header>
         )}
 
@@ -104,7 +91,6 @@ function App() {
           {showProfile ? (
             <Profile session={session} onBack={() => setShowProfile(false)} />
           ) : (currentChatFriend || currentChatRoomId) ? (
-            // App.js の Chat コンポーネントを呼び出している部分
             <Chat 
               session={session} 
               friendEmail={currentChatFriend} 
@@ -115,10 +101,6 @@ function App() {
                 localStorage.removeItem('currentChatFriend');
                 localStorage.removeItem('currentChatRoomId');
                 setRefreshKey(prev => prev + 1);
-                // ↓ ここが重要！ 戻った後に一覧をリフレッシュする処理
-                // if (activeTab === 'rooms') {
-                //   // Rooms.js に再取得を促す仕組み（後述のRooms.jsの修正とセット）
-                // }
               }}
             />
           ) : activeTab === 'friends' ? (
@@ -129,7 +111,7 @@ function App() {
             />
           ) : (
             <Rooms 
-              key={refreshKey} // ★重要：これが変わると Rooms が新しく作り直される
+              key={refreshKey} 
               session={session} 
               onSelectRoom={handleStartChat} 
             />
@@ -137,19 +119,14 @@ function App() {
         </div>
       </div>
 
-      {/* 2. 下部メインタブ (個別チャット中・プロフィール編集中は非表示) */}
+      {/* 2. 下部メインタブ */}
       {!currentChatFriend && !currentChatRoomId && !showProfile && (
-        <footer style={{ 
-          display: 'flex', 
-          borderTop: '1px solid #eee', 
-          backgroundColor: '#fff', 
-          paddingBottom: 'env(safe-area-inset-bottom)' 
-        }}>
-          <button onClick={() => setActiveTab('friends')} style={footerTabStyle(activeTab === 'friends')}>
+        <footer style={styles.footer}>
+          <button onClick={() => setActiveTab('friends')} style={styles.footerTab(activeTab === 'friends')}>
             <span style={{ fontSize: '1.2rem' }}>👥</span>
             連絡帳
           </button>
-          <button onClick={() => setActiveTab('rooms')} style={footerTabStyle(activeTab === 'rooms')}>
+          <button onClick={() => setActiveTab('rooms')} style={styles.footerTab(activeTab === 'rooms')}>
             <span style={{ fontSize: '1.2rem' }}>💬</span>
             トーク
           </button>
@@ -158,5 +135,60 @@ function App() {
     </div>
   );
 }
+
+// --- 7. スタイル定義 (exportの前に配置) ---
+const styles = {
+  container: {
+    maxWidth: '600px',
+    margin: '0 auto',
+    height: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: theme.colors.bgApp, // themeを適用
+  },
+  contentWrapper: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    backgroundColor: theme.colors.bgContent, // themeを適用
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '15px 20px',
+    borderBottom: `1px solid ${theme.colors.border}`, // themeを適用
+    backgroundColor: '#fff',
+  },
+  logo: {
+    fontSize: '0.9rem',
+    fontFamily: "cursive",
+    color: theme.colors.textMain, // themeを適用
+    fontWeight: 'bold',
+  },
+  footer: {
+    display: 'flex',
+    borderTop: `1px solid ${theme.colors.border}`, // themeを適用
+    backgroundColor: '#fff',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  },
+  // アクティブ状態によって色が変わるタブ用
+  footerTab: (isActive) => ({
+    flex: 1,
+    padding: '12px 0',
+    border: 'none',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '2px',
+    fontSize: '0.85rem',
+    color: isActive ? theme.colors.primary : theme.colors.textSub, // themeを適用
+    transition: '0.2s',
+    fontWeight: isActive ? 'bold' : 'normal',
+  })
+};
 
 export default App;
