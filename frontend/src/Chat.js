@@ -53,8 +53,22 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   
   useEffect(() => {
     const fetchChatInfo = async () => {
+      // ルームIDがない場合は処理を中断（ガード句）
+      if (!propsRoomId) {
+        // roomIdがないがfriendEmailがある場合（連絡帳からの初回遷移など）のフォールバック
+        if (friendEmail) {
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('display_name')
+            .eq('email', friendEmail)
+            .single();
+          if (prof) setFriendDisplayName(prof.display_name || friendEmail);
+        }
+        return;
+      }
+
       // 1. 自分のステータス取得
-      if (propsRoomId && session?.user?.id) {
+      if (session?.user?.id) {
         const { data: memberData } = await supabase
           .from('room_members')
           .select('status')
@@ -66,46 +80,38 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         setMyStatus('joined');
       }
 
-      // 2. 表示名の決定 (Rooms.js の成功ロジックを反映)
-      if (propsRoomId) {
-        const { data: roomData } = await supabase
-          .from('rooms')
-          .select('name')
-          .eq('id', propsRoomId)
-          .single();
+      // 2. 表示名の決定 (is_group カラムによる判定)
+      const { data: roomData } = await supabase
+        .from('rooms')
+        .select('name, is_group') // is_groupを取得
+        .eq('id', propsRoomId)
+        .single();
 
-        if (roomData) {
-          // '1on1' という名前なら個人チャットとして相手を探す
-          if (roomData.name === '1on1') {
-            // Rooms.js と同じ RPC 関数を使用してメンバーを取得
-            const { data: members, error: rpcError } = await supabase
-              .rpc('get_room_members', { p_room_id: propsRoomId });
+      if (roomData) {
+        // is_group が false (個人チャット) の場合
+        if (roomData.is_group === false) {
+          const { data: members, error: rpcError } = await supabase
+            .rpc('get_room_members', { p_room_id: propsRoomId });
 
-            if (!rpcError && members) {
-              // 自分以外のメンバーを抽出
-              const opponent = members.find(u => u.user_id !== session.user.id);
-              if (opponent && opponent.profiles) {
-                setFriendDisplayName(opponent.profiles.display_name || opponent.profiles.email);
-              } else {
-                setFriendDisplayName(friendEmail || "トーク相手");
-              }
+          if (!rpcError && members) {
+            // 自分以外のメンバーを抽出
+            const opponent = members.find(u => u.user_id !== session.user.id);
+            if (opponent && opponent.profiles) {
+              setFriendDisplayName(opponent.profiles.display_name || opponent.profiles.email);
+            } else {
+              setFriendDisplayName(friendEmail || "トーク相手");
             }
-          } else {
-            // グループチャットならそのままルーム名を表示
-            setFriendDisplayName(roomData.name);
           }
+        } else {
+          // グループチャット (is_group === true) の場合はルーム名をそのまま表示
+          setFriendDisplayName(roomData.name);
         }
-        fetchMembers();
-      } else if (friendEmail) {
-        // 連絡帳から（roomIdがない場合）のフォールバック
-        const { data: prof } = await supabase
-          .from('profiles')
-          .select('display_name')
-          .eq('email', friendEmail)
-          .single();
-        if (prof) setFriendDisplayName(prof.display_name || friendEmail);
       }
+      
+      // 最後にメンバー一覧を更新
+      fetchMembers();
     };
+
     fetchChatInfo();
   }, [friendEmail, propsRoomId, session, fetchMembers]);
 
@@ -242,22 +248,65 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     setIsInviteModalOpen(true);
   };
 
+  // const executeInvite = async () => {
+  //   if (selectedFriends.length === 0) return;
+  //   const inserts = selectedFriends.map(friendId => ({
+  //     room_id: propsRoomId,
+  //     user_id: friendId,
+  //     status: 'pending'
+  //   }));
+
+  //   const { error } = await supabase.from('room_members').insert(inserts);
+
+  //   if (error) {
+  //     alert("既に招待済みのユーザーが含まれているか、エラーが発生しました。");
+  //   } else {
+  //     alert(`${selectedFriends.length}名を招待しました！`);
+  //     setIsInviteModalOpen(false);
+  //     setSelectedFriends([]);
+  //   }
+  // };
+
   const executeInvite = async () => {
     if (selectedFriends.length === 0) return;
-    const inserts = selectedFriends.map(friendId => ({
-      room_id: propsRoomId,
-      user_id: friendId,
-      status: 'pending'
-    }));
+    
+    try {
+      // 1. 招待メンバーを登録
+      const inserts = selectedFriends.map(friendId => ({
+        room_id: propsRoomId,
+        user_id: friendId,
+        status: 'pending'
+      }));
 
-    const { error } = await supabase.from('room_members').insert(inserts);
+      const { error: inviteError } = await supabase.from('room_members').insert(inserts);
+      if (inviteError) throw inviteError;
 
-    if (error) {
-      alert("既に招待済みのユーザーが含まれているか、エラーが発生しました。");
-    } else {
+      // 2. 現在の合計人数をチェック（現在のメンバー + 新しく招待した人数）
+      // memberCount は現在の人数
+      if (memberCount + selectedFriends.length >= 3) {
+        // 3人以上になるならグループに昇格
+        // pair_key を null にすることで、1対1ルームとしての「刻印」を消す
+        const { error: updateError } = await supabase
+          .from('rooms')
+          .update({ 
+            is_group: true, 
+            pair_key: null,
+            name: 'グループチャット' // 1on1 や 個人チャット という名前なら汎用的な名前に変更
+          })
+          .eq('id', propsRoomId)
+          // すでにグループなら更新不要だが、1対1の時だけ更新されるように
+          .eq('is_group', false); 
+        
+        if (updateError) console.error("グループ昇格エラー:", updateError.message);
+      }
+
       alert(`${selectedFriends.length}名を招待しました！`);
       setIsInviteModalOpen(false);
       setSelectedFriends([]);
+      fetchMembers(); // メンバー一覧を更新
+    } catch (error) {
+      console.error(error);
+      alert("招待に失敗しました。");
     }
   };
 

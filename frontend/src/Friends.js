@@ -90,67 +90,129 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     if (!error) fetchFriends();
   };
 
-  // --- 追加：トーク開始時のルーム作成ロジック ---
+  // --- トーク開始時のルーム作成ロジック ---
+  // const handleTalkClick = async (friendEmail) => {
+  //   setLoading(true);
+  //   try {
+  //     // 1. 相手のプロフィールIDを取得
+  //     const { data: friendProfile } = await supabase
+  //       .from('profiles')
+  //       .select('id')
+  //       .eq('email', friendEmail)
+  //       .single();
+
+  //     if (!friendProfile) {
+  //       alert("相手のプロフィールが見つかりません");
+  //       return;
+  //     }
+
+  //     // 2. すでにこの相手との1対1ルームが存在するかチェック
+  //     const { data: existingMembers } = await supabase
+  //       .from('room_members')
+  //       .select('room_id')
+  //       .eq('user_id', session.user.id);
+
+  //     let existingRoomId = null;
+  //     if (existingMembers && existingMembers.length > 0) {
+  //       const myRoomIds = existingMembers.map(m => m.room_id);
+  //       const { data: commonRoom } = await supabase
+  //         .from('room_members')
+  //         .select('room_id')
+  //         .in('room_id', myRoomIds)
+  //         .eq('user_id', friendProfile.id)
+  //         .maybeSingle();
+        
+  //       if (commonRoom) existingRoomId = commonRoom.room_id;
+  //     }
+
+  //     let finalRoomId = existingRoomId;
+
+  //     // 3. ルームがなければ新規作成
+  //     if (!existingRoomId) {
+  //       const { data: newRoom, error: roomError } = await supabase
+  //         .from('rooms')
+  //         .insert([{ name: '1on1' }])
+  //         .select()
+  //         .single();
+
+  //       if (roomError) throw roomError;
+  //       finalRoomId = newRoom.id;
+
+  //       // 自分と相手を登録
+  //       await supabase.from('room_members').insert([
+  //         { room_id: finalRoomId, user_id: session.user.id, status: 'joined' },
+  //         { room_id: finalRoomId, user_id: friendProfile.id, status: 'joined' }
+  //       ]);
+  //     }
+
+  //     // 4. 親(App.js)の handleStartChat を呼び出す
+  //     onStartChat(friendEmail, finalRoomId);
+
+  //   } catch (err) {
+  //     console.error(err);
+  //     alert("トークの開始に失敗しました");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+  // --- 修正：トーク開始時のルーム作成ロジック ---
   const handleTalkClick = async (friendEmail) => {
     setLoading(true);
     try {
-      // 1. 相手のプロフィールIDを取得
-      const { data: friendProfile } = await supabase
+      // 1. 相手の情報を1回だけ取得（ループ防止のためsingleで完結させる）
+      const { data: friendProfile, error: profError } = await supabase
         .from('profiles')
-        .select('id')
+        .select('id, display_name, email')
         .eq('email', friendEmail)
         .single();
 
-      if (!friendProfile) {
-        alert("相手のプロフィールが見つかりません");
-        return;
+      if (profError || !friendProfile) {
+        throw new Error("相手のプロフィールが見つかりません");
       }
 
-      // 2. すでにこの相手との1対1ルームが存在するかチェック
-      const { data: existingMembers } = await supabase
-        .from('room_members')
-        .select('room_id')
-        .eq('user_id', session.user.id);
+      // 表示名を確定（名前があれば名前、なければメール）
+      const opponentName = friendProfile.display_name || friendProfile.email;
 
-      let existingRoomId = null;
-      if (existingMembers && existingMembers.length > 0) {
-        const myRoomIds = existingMembers.map(m => m.room_id);
-        const { data: commonRoom } = await supabase
-          .from('room_members')
-          .select('room_id')
-          .in('room_id', myRoomIds)
-          .eq('user_id', friendProfile.id)
-          .maybeSingle();
-        
-        if (commonRoom) existingRoomId = commonRoom.room_id;
-      }
+      // 2. ペアキー生成
+      const ids = [session.user.id, friendProfile.id].sort();
+      const pairKey = `${ids[0]}_${ids[1]}`;
 
-      let finalRoomId = existingRoomId;
+      // 3. 既存検索
+      const { data: existingRoom } = await supabase
+        .from('rooms')
+        .select('id')
+        .eq('pair_key', pairKey)
+        .maybeSingle();
 
-      // 3. ルームがなければ新規作成
-      if (!existingRoomId) {
+      let finalRoomId = existingRoom?.id;
+
+      // 4. 新規作成
+      if (!finalRoomId) {
+        // nameには相手の名前を入れておくが、is_group: false を重要視する
         const { data: newRoom, error: roomError } = await supabase
           .from('rooms')
-          .insert([{ name: '1on1' }])
+          .insert([{ 
+            name: opponentName, // 固定値ではなく相手の名を入れる
+            pair_key: pairKey,
+            is_group: false 
+          }])
           .select()
           .single();
 
         if (roomError) throw roomError;
         finalRoomId = newRoom.id;
 
-        // 自分と相手を登録
         await supabase.from('room_members').insert([
           { room_id: finalRoomId, user_id: session.user.id, status: 'joined' },
           { room_id: finalRoomId, user_id: friendProfile.id, status: 'joined' }
         ]);
       }
 
-      // 4. 親(App.js)の handleStartChat を呼び出す
       onStartChat(friendEmail, finalRoomId);
 
     } catch (err) {
       console.error(err);
-      alert("トークの開始に失敗しました");
+      alert(err.message);
     } finally {
       setLoading(false);
     }
