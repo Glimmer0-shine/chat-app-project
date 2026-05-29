@@ -17,54 +17,46 @@ const Rooms = ({ session, onSelectRoom }) => {
     if (!session?.user?.id) return;
     setLoading(true);
 
-
     try {
-      // 自分が参加しており、かつ非表示ではないルームを名簿から取得
+      // 1. roomsテーブルから is_group を取得するように修正
       const { data: memberData, error: memberError } = await supabase
         .from('room_members')
         .select(`
           room_id,
           status,
           is_hidden,
-          rooms ( id, name )
+          rooms ( id, name, is_group ) 
         `)
         .eq('user_id', session.user.id)
         .eq('is_hidden', false);
 
       if (memberError) throw memberError;
-      
-
-
-      // 各ルームの「相手の名前」と「最新メッセージ」を補完
-      // --- Rooms.js の fetchAllRooms 内を修正 ---
 
       const formattedRooms = await Promise.all(memberData.map(async (m) => {
         const roomId = m.room_id;
-        const isGroup = m.rooms?.name !== '1on1';
-        let displayName = m.rooms?.name || '不明なグループ';
+        
+        // ★修正: nameによる判定ではなく is_group による判定に変更
+        const isGroup = m.rooms?.is_group ?? true; 
+        let displayName = m.rooms?.name || '不明なルーム';
         let opponentEmail = null;
 
+        // 個人トーク (isGroup === false) の場合のみ相手の名前を取得
         if (!isGroup) {
-          // ★RPC 関数 (get_room_members) を呼び出す
           const { data: members, error: rpcError } = await supabase
             .rpc('get_room_members', { p_room_id: roomId });
 
-          if (rpcError) {
-            console.error("RPCエラー:", rpcError);
-          }
-
-          // 自分以外のメンバーを抽出
-          const opponent = members?.find(u => u.user_id !== session.user.id);
-
-          if (opponent && opponent.profiles) {
-            displayName = opponent.profiles.display_name || opponent.profiles.email;
-            opponentEmail = opponent.profiles.email;
-          } else {
-            displayName = "相手不在";
+          if (!rpcError && members) {
+            const opponent = members.find(u => u.user_id !== session.user.id);
+            if (opponent && opponent.profiles) {
+              displayName = opponent.profiles.display_name || opponent.profiles.email;
+              opponentEmail = opponent.profiles.email;
+            } else {
+              displayName = "相手不在";
+            }
           }
         }
 
-        // 最新メッセージ取得（ここは今のままでOK）
+        // 最新メッセージ取得（既存ロジック維持）
         const { data: lastMsg } = await supabase
           .from('messages')
           .select('text, created_at')
@@ -84,7 +76,6 @@ const Rooms = ({ session, onSelectRoom }) => {
         };
       }));
 
-      // メッセージの新しい順にソート（時間が無いものは後ろへ）
       setRooms(formattedRooms.sort((a, b) => (b.time || '').localeCompare(a.time || '')));
     } catch (err) {
       console.error("データ取得エラー:", err);
@@ -112,7 +103,7 @@ const Rooms = ({ session, onSelectRoom }) => {
     if (!newGroupName.trim()) return;
     const { data: roomData, error: roomError } = await supabase
       .from('rooms')
-      .insert([{ name: newGroupName, created_by: session.user.id }])
+      .insert([{ name: newGroupName, created_by: session.user.id, is_group: true }])
       .select().single();
     
     if (roomError) return alert("作成失敗");
@@ -209,7 +200,7 @@ const Rooms = ({ session, onSelectRoom }) => {
           >        
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span style={{ fontWeight: 'bold', color: theme.colors.textMain }}>
-                {room.isGroup ? `[グループ] ${room.name}` : room.name}
+                {room.isGroup ? `${room.name}` : room.name}
               </span>
               <span style={{ fontSize: '0.7rem', color: theme.colors.textSub }}>{room.time}</span>
             </div>
