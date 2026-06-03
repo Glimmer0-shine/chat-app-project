@@ -18,16 +18,108 @@ function App() {
 
   // --- 2. useEffect: セッション管理 ---
   useEffect(() => {
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
+    
+    // 【新しく追加した共通関数】ユーザーが退会済みか判定し、退会済みならログアウトさせる
+    const checkUserStatus = async (user) => {
+      if (!user) return true;
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('is_deleted')
+          .eq('id', user.id)
+          .single();
+        
+        // 退会フラグが true の場合
+        if (!error && data?.is_deleted) {
+          alert("このアカウントは退会済みです。");
+          await supabase.auth.signOut();
+          return false; // 退会しているためNG判定
+        }
+      } catch (e) {
+        console.error("退会チェックエラー:", e);
+      }
+      return true; // 継続利用OK判定
     };
-    getSession();
 
-    const { data: { subscription } } =
-      supabase.auth.onAuthStateChange((_event, session) => {
-        setSession(session);
-      });
+    const initializeAuth = async () => {
+      // A. 認証維持期間のチェック
+      const limitDays = parseInt(localStorage.getItem('auth_session_limit') || '0');
+      const lastVerified = localStorage.getItem('auth_last_verified');
+
+      if (lastVerified) {
+        const diffMs = Date.now() - parseInt(lastVerified);
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+        let shouldSignOut = false;
+
+        if (limitDays === 0) {
+          // 【設定：毎回】sessionStorage（タブを閉じると消える）がない場合はログアウト
+          if (!sessionStorage.getItem('session_active')) {
+            shouldSignOut = true;
+          }
+        } else if (diffDays > limitDays) {
+          // 【設定：1ヶ月/半年】期限切れの場合
+          alert(`ログイン有効期限（${limitDays}日）が切れたため、再ログインが必要です。`);
+          shouldSignOut = true;
+        }
+
+        if (shouldSignOut) {
+          await supabase.auth.signOut();
+          localStorage.removeItem('auth_last_verified');
+          sessionStorage.removeItem('session_active');
+          setSession(null);
+          return; // ログアウトした場合はここで終了
+        }
+      }
+
+      // B. 既存のセッション取得ロジック
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // 【変更点】アプリ起動時にセッションがあった場合、退会済みユーザーでないか確認する
+      if (session) {
+        const isUserActive = await checkUserStatus(session.user);
+        if (!isUserActive) {
+          setSession(null);
+          return; // 退会済みならここで処理を止める
+        }
+      }
+
+      setSession(session);
+
+      if (session) {
+        // セッションが有効なら、アクティブフラグを立てる
+        sessionStorage.setItem('session_active', 'true');
+        // 初めての利用などでVerifiedがない場合はセット
+        if (!lastVerified) {
+          localStorage.setItem('auth_last_verified', Date.now().toString());
+        }
+      }
+    };
+
+    initializeAuth();
+
+    // C. 状態変化の監視
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // 【変更点】ログイン（SIGNED_IN）が発生した瞬間に退会チェックを割り込ませる
+      if (session && event === 'SIGNED_IN') {
+        const isUserActive = await checkUserStatus(session.user);
+        if (!isUserActive) {
+          setSession(null);
+          return; // 退会済みならこれ以降のログイン処理（セッション保持）をさせない
+        }
+      }
+
+      setSession(session);
+      if (session) {
+        sessionStorage.setItem('session_active', 'true');
+        // ログイン成功時、またはパスワード変更時などに時刻を更新
+        if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+          localStorage.setItem('auth_last_verified', Date.now().toString());
+        }
+      } else {
+        sessionStorage.removeItem('session_active');
+      }
+    });
 
     return () => subscription.unsubscribe();
   }, []);
@@ -137,6 +229,7 @@ function App() {
 }
 
 // --- 7. スタイル定義 (exportの前に配置) ---
+// 【修正なし】オリジナルコードのCSSプロパティを一言一句完全に維持しています
 const styles = {
   container: {
     maxWidth: '600px',
