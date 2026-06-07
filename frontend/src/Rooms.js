@@ -12,35 +12,34 @@ const Rooms = ({ session, onSelectRoom }) => {
   const [hiddenRooms, setHiddenRooms] = useState([]);
   let pressTimer;
 
-  // --- 1. ルーム一覧の取得 (1対1・グループ統合版) ---
+  // --- 1. ルーム一覧の取得 (非表示・削除ガード付き) ---
   const fetchAllRooms = useCallback(async () => {
     if (!session?.user?.id) return;
     setLoading(true);
 
     try {
-      // 1. roomsテーブルから is_group を取得するように修正
+      // 💡 修正：is_hidden が false かつ is_deleted が false（またはnull）のものだけ取得
       const { data: memberData, error: memberError } = await supabase
         .from('room_members')
         .select(`
           room_id,
           status,
           is_hidden,
+          is_deleted,
           rooms ( id, name, is_group ) 
         `)
         .eq('user_id', session.user.id)
-        .eq('is_hidden', false);
+        .eq('is_hidden', false)
+        .eq('is_deleted', false);
 
       if (memberError) throw memberError;
 
       const formattedRooms = await Promise.all(memberData.map(async (m) => {
         const roomId = m.room_id;
-        
-        // ★修正: nameによる判定ではなく is_group による判定に変更
         const isGroup = m.rooms?.is_group ?? true; 
         let displayName = m.rooms?.name || '不明なルーム';
         let opponentEmail = null;
 
-        // 個人トーク (isGroup === false) の場合のみ相手の名前を取得
         if (!isGroup) {
           const { data: members, error: rpcError } = await supabase
             .rpc('get_room_members', { p_room_id: roomId });
@@ -56,7 +55,6 @@ const Rooms = ({ session, onSelectRoom }) => {
           }
         }
 
-        // 最新メッセージ取得（既存ロジック維持）
         const { data: lastMsg } = await supabase
           .from('messages')
           .select('text, created_at')
@@ -111,7 +109,9 @@ const Rooms = ({ session, onSelectRoom }) => {
     await supabase.from('room_members').insert([{ 
       room_id: roomData.id, 
       user_id: session.user.id,
-      status: 'joined' 
+      status: 'joined',
+      is_hidden: false,
+      is_deleted: false
     }]);
     
     setNewGroupName('');
@@ -119,9 +119,18 @@ const Rooms = ({ session, onSelectRoom }) => {
     fetchAllRooms();
   };
 
+  // // --- メニュー制御 ---
+  // const handleContextMenu = (e, roomId) => {
+  //   e.preventDefault();
+  //   const clickY = e.pageY || e.touches?.[0].pageY;
+  //   setContextMenu({ visible: true, x: 0, y: clickY, roomId: roomId });
+  // };
   // --- メニュー制御 ---
   const handleContextMenu = (e, roomId) => {
-    e.preventDefault();
+    // 💡 追記：ブラウザ側がキャンセル不可（cancelable=false）と言っている時は preventDefault を呼ばない
+    if (e.cancelable) {
+      e.preventDefault();
+    }
     const clickY = e.pageY || e.touches?.[0].pageY;
     setContextMenu({ visible: true, x: 0, y: clickY, roomId: roomId });
   };
@@ -129,10 +138,14 @@ const Rooms = ({ session, onSelectRoom }) => {
   const handleTouchStart = (e, roomId) => {
     pressTimer = setTimeout(() => handleContextMenu(e, roomId), 700);
   };
+  // 🚀 新設：指が動いた（スクロールした）ら、長押しタイマーをキャンセルする
+  const handleTouchMove = () => {
+    clearTimeout(pressTimer);
+  };
   const handleTouchEnd = () => clearTimeout(pressTimer);
   const closeContextMenu = () => setContextMenu({ ...contextMenu, visible: false });
 
-  // --- 非表示・再表示ロジック ---
+  // --- 非表示・再表示・削除ロジック ---
   const hideRoom = async (e, roomId) => {
     e.stopPropagation();
     if (!window.confirm("このトークを非表示にしますか？")) return;
@@ -149,6 +162,7 @@ const Rooms = ({ session, onSelectRoom }) => {
   };
 
   const fetchHiddenRooms = async () => {
+    // 💡 修正：非表示(is_hidden=true)だが、まだ削除されていない(is_deleted=false)ものを取得
     const { data, error } = await supabase
       .from('room_members')
       .select(`
@@ -156,7 +170,8 @@ const Rooms = ({ session, onSelectRoom }) => {
         rooms ( name )
       `)
       .eq('user_id', session.user.id)
-      .eq('is_hidden', true);
+      .eq('is_hidden', true)
+      .eq('is_deleted', false);
 
     if (!error) setHiddenRooms(data || []);
     setIsHiddenListOpen(true);
@@ -172,6 +187,25 @@ const Rooms = ({ session, onSelectRoom }) => {
     if (!error) {
       setHiddenRooms(prev => prev.filter(r => r.room_id !== roomId));
       fetchAllRooms();
+    }
+  };
+
+  // 🚀 新設：非表示リストからトークルームを論理削除する
+  const deleteRoomFromHidden = async (roomId) => {
+    if (!window.confirm("このトークを削除しますか？\n（リストおよび一覧から完全に消去されます）")) return;
+
+    const { error } = await supabase
+      .from('room_members')
+      .update({ is_deleted: true }) // 削除フラグをONにする
+      .eq('room_id', roomId)
+      .eq('user_id', session.user.id);
+
+    if (!error) {
+      alert("削除しました。");
+      setHiddenRooms(prev => prev.filter(r => r.room_id !== roomId));
+      fetchAllRooms();
+    } else {
+      alert("削除に失敗しました");
     }
   };
 
@@ -195,6 +229,7 @@ const Rooms = ({ session, onSelectRoom }) => {
             onClick={() => contextMenu.visible ? closeContextMenu() : room.isGroup ? onSelectRoom(null, room.roomId) : onSelectRoom(room.opponentEmail, room.roomId)}
             onContextMenu={(e) => handleContextMenu(e, room.roomId)}
             onTouchStart={(e) => handleTouchStart(e, room.roomId)}
+            onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             style={styles.roomItem}
           >        
@@ -246,7 +281,11 @@ const Rooms = ({ session, onSelectRoom }) => {
               hiddenRooms.map((hr) => (
                 <div key={hr.room_id} style={styles.hiddenRoomItem}>
                   <span style={{ fontSize: '0.9rem' }}>{hr.rooms?.name === '1on1' ? '1対1トーク' : hr.rooms?.name}</span>
-                  <button onClick={() => unhideRoom(hr.room_id)} style={styles.unhideBtn}>再表示</button>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <button onClick={() => unhideRoom(hr.room_id)} style={styles.unhideBtn}>再表示</button>
+                    {/* 💡 削除ボタンを追加 */}
+                    <button onClick={() => deleteRoomFromHidden(hr.room_id)} style={styles.deleteBtn}>削除</button>
+                  </div>
                 </div>
               ))
             )}
@@ -284,8 +323,9 @@ const styles = {
   lastMsg: { fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '85%', maxWidth: '400px' },
-  hiddenRoomItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}` },
+  hiddenRoomItem: { display: 'flex', justifycontent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}` },
   unhideBtn: { backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 10px', fontSize: '0.75rem', cursor: 'pointer' },
+  deleteBtn: { backgroundColor: '#fff5f5', color: theme.colors.error, border: `1px solid #ffa8a8`, borderRadius: '4px', padding: '5px 10px', fontSize: '0.75rem', cursor: 'pointer' },
   invisibleOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1000 },
   contextMenu: { position: 'fixed', backgroundColor: '#fff', border: `1px solid ${theme.colors.border}`, borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1001, minWidth: '150px', overflow: 'hidden' },
   contextMenuItem: { padding: '12px 20px', fontSize: '0.9rem', cursor: 'pointer', color: theme.colors.error }
