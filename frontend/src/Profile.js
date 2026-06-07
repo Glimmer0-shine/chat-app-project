@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { theme, commonStyles } from './theme';
 
@@ -16,9 +16,10 @@ const Profile = ({ session, onBack }) => {
     return localStorage.getItem('auth_session_limit') || '0';
   });
 
-  // セキュリティ変更フォームの開閉管理
+  // 各フォーム・アコーディオンの開閉管理
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [showFriendManagement, setShowFriendManagement] = useState(false);
 
   // メールアドレス変更用ステート
   const [newEmail, setNewEmail] = useState('');
@@ -32,26 +33,97 @@ const Profile = ({ session, onBack }) => {
   // アバター操作用モーダルの開閉状態
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
 
+  // 友達管理用ステート
+  const [settingsTab, setSettingsTab] = useState('hidden'); 
+  const [hiddenFriends, setHiddenFriends] = useState([]);
+  const [blockedFriends, setBlockedFriends] = useState([]);
+
+  // --- 1. プロフィール取得 ---
   useEffect(() => {
+    if (!session?.user?.id) return;
+
+    let isMounted = true; 
     const getProfile = async () => {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle(); 
 
-      if (!error && data) {
-        setProfile(data);
-        setDisplayName(data.display_name || '');
-        setAvatarUrl(data.avatar_url || '');
+        if (isMounted && !error && data) {
+          setProfile(data);
+          setDisplayName(data.display_name || '');
+          setAvatarUrl(data.avatar_url || '');
+        }
+      } catch (e) {
+        console.error("プロフィール取得例外:", e);
+      } finally {
+        if (isMounted) setLoading(false);
       }
-      setLoading(false);
     };
     getProfile();
-  }, [session]);
 
-  // --- 画像アップロード処理 ---
+    return () => { isMounted = false; };
+  }, [session?.user?.id]); 
+
+  // --- 2. 非表示リスト & ブロックリストを取得する関数 ---
+  const fetchManagementLists = useCallback(async () => {
+    if (!session?.user?.id) return;
+
+    try {
+      // 非表示ユーザーの取得
+      const { data: hiddenData, error: hError } = await supabase
+        .from('friends')
+        .select('id, friend_email, profiles!friend_email(display_name)')
+        .eq('user_id', session.user.id)
+        .eq('is_hidden', true);
+      if (!hError) setHiddenFriends(hiddenData || []);
+
+      // ブロックユーザーの取得
+      const { data: blockedData, error: bError } = await supabase
+        .from('friends')
+        .select('id, friend_email, profiles!friend_email(display_name)')
+        .eq('user_id', session.user.id)
+        .eq('is_blocked', true);
+      if (!bError) setBlockedFriends(blockedData || []);
+    } catch (e) {
+      console.error("リスト取得例外:", e);
+    }
+  }, [session?.user?.id]); 
+
+  useEffect(() => {
+    if (showFriendManagement && session?.user?.id) {
+      fetchManagementLists();
+    }
+  }, [showFriendManagement, fetchManagementLists, session?.user?.id]);
+
+  // --- 3. 各アコーディオンの切り替え制御（お掃除機能付き） ---
+  const toggleAccordion = (type) => {
+    // フォームを閉じる、または切り替えるタイミングで入力をリセットして誤送信を防ぐ
+    setNewEmail('');
+    setConfirmEmail('');
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+
+    if (type === 'email') {
+      setShowEmailForm(!showEmailForm);
+      setShowPasswordForm(false);
+      setShowFriendManagement(false);
+    } else if (type === 'password') {
+      setShowPasswordForm(!showPasswordForm);
+      setShowEmailForm(false);
+      setShowFriendManagement(false);
+    } else if (type === 'management') {
+      setShowFriendManagement(!showFriendManagement);
+      setShowEmailForm(false);
+      setShowPasswordForm(false);
+    }
+  };
+
+  // --- 4. 画像アップロード・削除処理 ---
   const handleAvatarUpload = async (e) => {
     try {
       setUpdating(true);
@@ -86,7 +158,6 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  // --- 画像削除処理 ---
   const handleDeleteAvatar = async () => {
     setIsAvatarModalOpen(false);
     if (!avatarUrl) return;
@@ -109,7 +180,7 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  // --- パスワードによる本人再認証ヘルパー ---
+  // --- 5. セキュリティ認証＆更新系処理 ---
   const verifyCurrentPassword = async (password) => {
     if (!password) {
       throw new Error('現在のパスワードを入力してください。');
@@ -123,7 +194,6 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  // --- メールアドレスの変更実行 ---
   const handleEmailUpdate = async (e) => {
     e.preventDefault();
     if (!newEmail || !confirmEmail) return alert('全ての項目を入力してください。');
@@ -132,7 +202,6 @@ const Profile = ({ session, onBack }) => {
 
     try {
       setUpdating(true);
-
       const { error: emailError } = await supabase.auth.updateUser({ email: newEmail });
       if (emailError) throw emailError;
 
@@ -154,7 +223,6 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  // --- パスワードの変更実行 ---
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
     if (!currentPassword || !newPassword || !confirmPassword) return alert('全ての項目を入力してください。');
@@ -180,7 +248,6 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  // --- 一般設定の保存処理 ---
   const handleGeneralUpdate = async () => {
     try {
       setUpdating(true);
@@ -201,8 +268,44 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  // --- 退会処理（データ保持・フラグON方式） ---
+  // --- 6. 友達管理アコーディオン内の操作ロジック ---
+  const handleUpdateStatus = async (id, updates, successMessage) => {
+    if (!session?.user?.id) return;
+    const { error } = await supabase
+      .from('friends')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', session.user.id); // 安全のために自分のレコードに限定
+
+    if (!error) {
+      alert(successMessage);
+      fetchManagementLists();
+    } else {
+      alert("処理に失敗しました");
+    }
+  };
+
+  const deleteFriendFromManagement = async (id) => {
+    if (!session?.user?.id) return;
+    if (!window.confirm('この友達を削除しますか？\n（連絡帳および管理リストから完全に消去されます）')) return;
+    
+    const { error } = await supabase
+      .from('friends')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', session.user.id); // 安全制限
+
+    if (!error) {
+      alert("削除しました。");
+      fetchManagementLists();
+    } else {
+      alert("削除に失敗しました");
+    }
+  };
+
+  // --- 7. 退会処理 ---
   const handleDeleteAccount = async () => {
+    if (!session?.user?.id) return;
     const confirm1 = window.confirm("本当に退会しますか？この操作は取り消せません。");
     if (!confirm1) return;
     
@@ -214,8 +317,6 @@ const Profile = ({ session, onBack }) => {
 
     try {
       setUpdating(true);
-
-      // 1. profiles テーブルの退会フラグを true に更新（物理削除はしない）
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ is_deleted: true })
@@ -223,9 +324,11 @@ const Profile = ({ session, onBack }) => {
 
       if (profileError) throw profileError;
 
-      // 2. 即座にログアウトさせる
+      // セッションに関わるキャッシュもクリア
+      localStorage.removeItem('auth_last_verified');
+      sessionStorage.removeItem('session_active');
+
       await supabase.auth.signOut();
-      
       alert('退会処理が完了しました。ご利用ありがとうございました。');
     } catch (error) {
       alert('退会処理中にエラーが発生しました: ' + error.message);
@@ -234,7 +337,11 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
-  const handleLogout = () => supabase.auth.signOut();
+  const handleLogout = () => {
+    localStorage.removeItem('auth_last_verified');
+    sessionStorage.removeItem('session_active');
+    supabase.auth.signOut();
+  };
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '50px' }}>読み込み中...</p>;
 
@@ -314,7 +421,7 @@ const Profile = ({ session, onBack }) => {
         <div style={styles.accordionGroup}>
           <button 
             type="button" 
-            onClick={() => { setShowEmailForm(!showEmailForm); setShowPasswordForm(false); }} 
+            onClick={() => toggleAccordion('email')} 
             style={styles.accordionToggle}
           >
             ✉️ メールアドレスを変更する {showEmailForm ? '▲' : '▼'}
@@ -322,7 +429,6 @@ const Profile = ({ session, onBack }) => {
           
           {showEmailForm && (
             <form onSubmit={handleEmailUpdate} style={styles.accordionContent}>
-              {/* ★修正ポイント: labelエラーを解消するために input (readOnly) に変更 */}
               <div style={styles.infoGroup}>
                 <label htmlFor="current-email-display" style={styles.subLabel}>現在のメールアドレス</label>
                 <input 
@@ -371,7 +477,7 @@ const Profile = ({ session, onBack }) => {
         <div style={styles.accordionGroup}>
           <button 
             type="button" 
-            onClick={() => { setShowPasswordForm(!showPasswordForm); setShowEmailForm(false); }} 
+            onClick={() => toggleAccordion('password')} 
             style={styles.accordionToggle}
           >
             🔑 パスワードを変更する {showPasswordForm ? '▲' : '▼'}
@@ -425,17 +531,90 @@ const Profile = ({ session, onBack }) => {
             </form>
           )}
         </div>
+
+        <hr style={styles.hr} />
+
+        {/* 👥 友達管理エリア */}
+        <h4 style={{ margin: '0 0 15px 0', color: theme.colors.textMain }}>👥 友達管理</h4>
+
+        <div style={styles.accordionGroup}>
+          <button 
+            type="button" 
+            onClick={() => toggleAccordion('management')} 
+            style={styles.accordionToggle}
+          >
+            ⚙️ 非表示・ブロックユーザー管理 {showFriendManagement ? '▲' : '▼'}
+          </button>
+
+          {showFriendManagement && (
+            <div style={styles.accordionContent}>
+              <div style={styles.settingTabs}>
+                <button 
+                  type="button"
+                  onClick={() => setSettingsTab('hidden')} 
+                  style={styles.settingTabBtn(settingsTab === 'hidden')}
+                >
+                  非表示 ({hiddenFriends.length})
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setSettingsTab('blocked')} 
+                  style={styles.settingTabBtn(settingsTab === 'blocked')}
+                >
+                  ブロック ({blockedFriends.length})
+                </button>
+              </div>
+
+              <div style={styles.listContainer}>
+                {settingsTab === 'hidden' ? (
+                  hiddenFriends.length === 0 ? (
+                    <p style={styles.emptyText}>非表示のユーザーはいません</p>
+                  ) : (
+                    hiddenFriends.map(f => (
+                      <div key={f.id} style={styles.manageRow}>
+                        <div style={styles.manageInfo}>
+                          <span style={styles.manageName}>{f.profiles?.display_name || '名前未設定'}</span>
+                          <span style={styles.manageEmail}>{f.friend_email}</span>
+                        </div>
+                        <div style={styles.manageActions}>
+                          <button type="button" onClick={() => handleUpdateStatus(f.id, { is_hidden: false }, "非表示を解除しました")} style={styles.actionBtn}>解除</button>
+                          <button type="button" onClick={() => deleteFriendFromManagement(f.id)} style={styles.actionDeleteBtn}>削除</button>
+                        </div>
+                      </div>
+                    ))
+                  )
+                ) : (
+                  blockedFriends.length === 0 ? (
+                    <p style={styles.emptyText}>ブロック中のユーザーはいません</p>
+                  ) : (
+                    blockedFriends.map(f => (
+                      <div key={f.id} style={styles.manageRow}>
+                        <div style={styles.manageInfo}>
+                          <span style={styles.manageName}>{f.profiles?.display_name || '名前未設定'}</span>
+                          <span style={styles.manageEmail}>{f.friend_email}</span>
+                        </div>
+                        <div style={styles.manageActions}>
+                          <button type="button" onClick={() => handleUpdateStatus(f.id, { is_blocked: false }, "ブロックを解除しました")} style={styles.actionBtn}>解除</button>
+                          <button type="button" onClick={() => deleteFriendFromManagement(f.id)} style={styles.actionDeleteBtn}>削除</button>
+                        </div>
+                      </div>
+                    ))
+                  )
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <p style={styles.dateText}>
-        アカウント作成日: {new Date(profile?.created_at).toLocaleDateString()}
+        アカウント作成日: {profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : '---'}
       </p>      
       
       <button onClick={handleLogout} style={styles.logoutBtn}>
         ログアウト
       </button>
 
-      {/* 退会ボタン */}
       <div style={{ marginTop: '40px' }}>
         <button onClick={handleDeleteAccount} style={styles.deleteAccBtn}>
           退会してアカウントを削除する
@@ -495,7 +674,6 @@ const styles = {
   infoGroup: { marginBottom: '20px' },
   label: { color: theme.colors.textSub, fontSize: '0.8rem', marginBottom: '8px', display: 'block', fontWeight: 'bold' },
   subLabel: { color: theme.colors.textSub, fontSize: '0.75rem', marginBottom: '6px', display: 'block' },
-  // 読み取り専用メールのスタイルをinput用に微調整
   readOnlyEmail: { width: '100%', boxSizing: 'border-box', padding: '10px', backgroundColor: '#e9ecef', borderRadius: '8px', fontSize: '0.9rem', color: '#495057', border: '1px solid #ced4da', outline: 'none' },
   logoutBtn: { 
     ...commonStyles.button, 
@@ -505,10 +683,28 @@ const styles = {
     border: `1px solid ${theme.colors.error}` 
   },
   hr: { border: 'none', borderTop: `1px solid ${theme.colors.border}`, margin: '20px 0' },
-  deleteAccBtn: { background: 'none', border: 'none', color: '#bbb', fontSize: '0.75rem', textDecoration: 'underline', cursor: 'pointer', padding: '10px' },
+  deleteAccBtn: { background: 'none', border: 'none', color: '#FB3C02', fontSize: '0.75rem', textDecoration: 'underline', cursor: 'pointer', padding: '10px' },
   accordionGroup: { marginBottom: '15px', border: `1px solid ${theme.colors.border}`, borderRadius: '8px', overflow: 'hidden' },
   accordionToggle: { width: '100%', padding: '12px 15px', textAlign: 'left', backgroundColor: '#f8f9fa', border: 'none', fontSize: '0.9rem', fontWeight: 'bold', color: '#333', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   accordionContent: { padding: '15px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}` },
+  
+  settingTabs: { display: 'flex', borderBottom: '1px solid #eee', backgroundColor: '#f8f9fa', marginBottom: '10px', borderRadius: '4px', overflow: 'hidden' },
+  settingTabBtn: (isActive) => ({
+    flex: 1, padding: '10px 0', border: 'none', background: 'none', fontSize: '0.8rem', cursor: 'pointer',
+    color: isActive ? theme.colors.primary : '#666', borderBottom: isActive ? `2px solid ${theme.colors.primary}` : '2px solid transparent',
+    fontWeight: isActive ? 'bold' : 'normal', transition: '0.2s'
+  }),
+  listContainer: { maxHeight: '240px', overflowY: 'auto' },
+  emptyText: { color: '#999', fontSize: '0.8rem', padding: '20px 0', textAlign: 'center', margin: 0 },
+  manageRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f1f3f5' },
+  manageInfo: { display: 'flex', flexDirection: 'column', textAlign: 'left', flex: 1, marginRight: '10px' },
+  manageName: { fontWeight: 'bold', fontSize: '0.85rem', color: '#333' },
+  manageEmail: { fontSize: '0.7rem', color: '#888' },
+  manageActions: { display: 'flex', gap: '5px' },
+  actionBtn: { padding: '3px 8px', fontSize: '0.7rem', backgroundColor: '#f1f3f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' },
+  actionDeleteBtn: { padding: '3px 8px', fontSize: '0.7rem', backgroundColor: '#fff5f5', color: theme.colors.error, border: '1px solid #ffa8a8', borderRadius: '4px', cursor: 'pointer' },
+  
+  dateText: { color: '#aaa', fontSize: '0.75rem', marginTop: '20px' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '12px', width: '85%', maxWidth: '350px' },
   modalMenu: { display: 'flex', flexDirection: 'column', gap: '10px' },

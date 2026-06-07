@@ -19,6 +19,11 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   const [members, setMembers] = useState([]);
   const [memberCount, setMemberCount] = useState(0); // 参加人数用
 
+  // 【ステート定義】友達状態、ブロック状態、グループ判別フラグ
+  const [isFriend, setIsFriend] = useState(true);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [isGroupRoom, setIsGroupRoom] = useState(false);
+
   const getRoomId = useCallback(() => {
     if (propsRoomId) return propsRoomId;
     if (!session?.user?.email || !friendEmail) return 'public';
@@ -28,7 +33,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
   const roomId = getRoomId();
   
-  // useCallbackで囲むことで、依存関係のエラーを解消し、無限ループを防ぎます
   const fetchMembers = useCallback(async (shouldOpenModal = false) => {
     if (!propsRoomId) return;
 
@@ -41,7 +45,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       if (data) {
         setMembers(data);
         setMemberCount(data.length);
-        // 引数が true の時だけモーダルを開くように変更
         if (shouldOpenModal) {
           setIsMemberListOpen(true);
         }
@@ -49,13 +52,11 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     } catch (error) {
       console.error('メンバー取得エラー:', error.message);
     }
-  }, [propsRoomId]); // propsRoomIdが変わった時だけ関数を再生成する
+  }, [propsRoomId]);
   
   useEffect(() => {
     const fetchChatInfo = async () => {
-      // ルームIDがない場合は処理を中断（ガード句）
       if (!propsRoomId) {
-        // roomIdがないがfriendEmailがある場合（連絡帳からの初回遷移など）のフォールバック
         if (friendEmail) {
           const { data: prof } = await supabase
             .from('profiles')
@@ -67,7 +68,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         return;
       }
 
-      // 1. 自分のステータス取得
       if (session?.user?.id) {
         const { data: memberData } = await supabase
           .from('room_members')
@@ -80,21 +80,20 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         setMyStatus('joined');
       }
 
-      // 2. 表示名の決定 (is_group カラムによる判定)
       const { data: roomData } = await supabase
         .from('rooms')
-        .select('name, is_group') // is_groupを取得
+        .select('name, is_group')
         .eq('id', propsRoomId)
         .single();
 
       if (roomData) {
-        // is_group が false (個人チャット) の場合
+        setIsGroupRoom(roomData.is_group);
+
         if (roomData.is_group === false) {
           const { data: members, error: rpcError } = await supabase
             .rpc('get_room_members', { p_room_id: propsRoomId });
 
           if (!rpcError && members) {
-            // 自分以外のメンバーを抽出
             const opponent = members.find(u => u.user_id !== session.user.id);
             if (opponent && opponent.profiles) {
               setFriendDisplayName(opponent.profiles.display_name || opponent.profiles.email);
@@ -102,13 +101,31 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
               setFriendDisplayName(friendEmail || "トーク相手");
             }
           }
+
+          // 【追加点】友達リストにおける登録・ブロック状態の取得
+          if (friendEmail) {
+            const { data: friendData } = await supabase
+              .from('friends')
+              .select('*')
+              .eq('user_id', session.user.id)
+              .eq('friend_email', friendEmail)
+              .maybeSingle();
+
+            if (friendData) {
+              // 登録されているがブロック中かどうかに応じてisFriendを制御
+              // (ブロック解除後に「追加」に戻したいので、is_blockedがtrueなら友達としては一旦false扱いにする)
+              setIsFriend(!friendData.is_blocked);
+              setIsBlocked(!!friendData.is_blocked);
+            } else {
+              setIsFriend(false);
+              setIsBlocked(false);
+            }
+          }
         } else {
-          // グループチャット (is_group === true) の場合はルーム名をそのまま表示
           setFriendDisplayName(roomData.name);
         }
       }
       
-      // 最後にメンバー一覧を更新
       fetchMembers();
     };
 
@@ -160,15 +177,78 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     return () => supabase.removeChannel(channel);
   }, [session, roomId, friendEmail, propsRoomId]);
 
+  // 【追加点】友達追加処理
+  const handleAddFriendFromChat = async () => {
+    if (!friendEmail) return;
+    try {
+      const { error } = await supabase
+        .from('friends')
+        .upsert(
+          { user_id: session.user.id, friend_email: friendEmail, is_blocked: false },
+          { onConflict: 'user_id,friend_email' }
+        );
+
+      if (error) throw error;
+      setIsFriend(true);
+      setIsBlocked(false);
+      alert("友達に追加しました！");
+    } catch (error) {
+      console.error(error);
+      alert("友達追加に失敗しました。");
+    }
+  };
+
+  // 【追加点】ブロック処理（その場に留まり、表示を切り替える）
+  const handleBlockFriendFromChat = async () => {
+    if (!friendEmail) return;
+    if (!window.confirm("このユーザーをブロックしますか？\nブロック中、相手からの新しいメッセージは表示されなくなります。")) return;
+
+    try {
+      const { error } = await supabase
+        .from('friends')
+        .upsert(
+          { user_id: session.user.id, friend_email: friendEmail, is_blocked: true },
+          { onConflict: 'user_id,friend_email' }
+        );
+
+      if (error) throw error;
+      setIsFriend(false);
+      setIsBlocked(true);
+      alert("ブロックしました。");
+    } catch (error) {
+      console.error(error);
+      alert("ブロック処理に失敗しました。");
+    }
+  };
+
+  // 【追加点】ブロック解除処理（追加・ブロックボタンに戻す）
+  const handleUnblockFriend = async () => {
+    if (!friendEmail) return;
+    try {
+      const { error } = await supabase
+        .from('friends')
+        .upsert(
+          { user_id: session.user.id, friend_email: friendEmail, is_blocked: false },
+          { onConflict: 'user_id,friend_email' }
+        );
+
+      if (error) throw error;
+      setIsFriend(false); // 「追加」ボタンを再表示させるためfalseに
+      setIsBlocked(false);
+      alert("ブロックを解除しました。");
+    } catch (error) {
+      console.error(error);
+      alert("ブロック解除に失敗しました。");
+    }
+  };
+
   const handleInviteResponse = async (newStatus) => {
-    // --- 自分の表示名を確定させる (DBのprofilesから直接取得) ---
     const { data: myProfile } = await supabase
       .from('profiles')
       .select('display_name')
       .eq('id', session.user.id)
       .single();
     
-    // display_nameがなければメールアドレスをフォールバックにする
     const myName = myProfile?.display_name || session.user.email;
 
     if (newStatus === 'joined') {
@@ -183,7 +263,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         return;
       }
 
-      // ★修正: ニックネームを使用
       await supabase.from('messages').insert([{ 
         room_id: propsRoomId, 
         user: session.user.email, 
@@ -194,14 +273,18 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       setMyStatus('joined');
       alert("グループに参加しました！");
     } else {
-      // ...（拒否処理はそのまま）
+      const { error } = await supabase
+        .from('room_members')
+        .delete()
+        .eq('room_id', propsRoomId)
+        .eq('user_id', session.user.id);
+      if (!error) onBack();
     }
   };
 
   const handleLeaveGroup = async () => {
     if (!window.confirm("本当にこのグループを脱退しますか？")) return;
 
-    // --- 脱退前に名前を取得しておく ---
     const { data: myProfile } = await supabase
       .from('profiles')
       .select('display_name')
@@ -216,7 +299,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       .eq('user_id', session.user.id);
     
     if (!error) {
-      // ★修正: ニックネームを使用
       await supabase.from('messages').insert([{ 
         room_id: propsRoomId, 
         user: session.user.email, 
@@ -231,7 +313,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     const { data: friendRows } = await supabase
       .from('friends')
       .select('friend_email')
-      .eq('user_id', session.user.id);
+      .eq('user_id', session.user.id)
+      .eq('is_blocked', false); // ブロック中のユーザーは招待リストに出さない
 
     if (!friendRows || friendRows.length === 0) {
       alert("招待できる友達がいません。");
@@ -248,30 +331,10 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     setIsInviteModalOpen(true);
   };
 
-  // const executeInvite = async () => {
-  //   if (selectedFriends.length === 0) return;
-  //   const inserts = selectedFriends.map(friendId => ({
-  //     room_id: propsRoomId,
-  //     user_id: friendId,
-  //     status: 'pending'
-  //   }));
-
-  //   const { error } = await supabase.from('room_members').insert(inserts);
-
-  //   if (error) {
-  //     alert("既に招待済みのユーザーが含まれているか、エラーが発生しました。");
-  //   } else {
-  //     alert(`${selectedFriends.length}名を招待しました！`);
-  //     setIsInviteModalOpen(false);
-  //     setSelectedFriends([]);
-  //   }
-  // };
-
   const executeInvite = async () => {
     if (selectedFriends.length === 0) return;
     
     try {
-      // 1. 招待メンバーを登録
       const inserts = selectedFriends.map(friendId => ({
         room_id: propsRoomId,
         user_id: friendId,
@@ -281,20 +344,15 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       const { error: inviteError } = await supabase.from('room_members').insert(inserts);
       if (inviteError) throw inviteError;
 
-      // 2. 現在の合計人数をチェック（現在のメンバー + 新しく招待した人数）
-      // memberCount は現在の人数
       if (memberCount + selectedFriends.length >= 3) {
-        // 3人以上になるならグループに昇格
-        // pair_key を null にすることで、1対1ルームとしての「刻印」を消す
         const { error: updateError } = await supabase
           .from('rooms')
           .update({ 
             is_group: true, 
             pair_key: null,
-            name: 'グループチャット' // 1on1 や 個人チャット という名前なら汎用的な名前に変更
+            name: 'グループチャット' 
           })
           .eq('id', propsRoomId)
-          // すでにグループなら更新不要だが、1対1の時だけ更新されるように
           .eq('is_group', false); 
         
         if (updateError) console.error("グループ昇格エラー:", updateError.message);
@@ -303,7 +361,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       alert(`${selectedFriends.length}名を招待しました！`);
       setIsInviteModalOpen(false);
       setSelectedFriends([]);
-      fetchMembers(); // メンバー一覧を更新
+      fetchMembers(); 
     } catch (error) {
       console.error(error);
       alert("招待に失敗しました。");
@@ -324,34 +382,29 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     const file = event.target.files[0];
     if (!file) return;
 
-    // 1. ファイル名の準備（重複を避けるためにランダムな値を付加）
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
     const filePath = `${roomId}/${fileName}`;
 
     try {
-      // 2. Storage（chat-attachmentsバケット）へアップロード
       const { error: uploadError } = await supabase.storage
         .from('chat-attachments')
         .upload(filePath, file);
 
       if (uploadError) throw uploadError;
 
-      // 3. 公開URLを取得
       const { data: { publicUrl } } = supabase.storage
         .from('chat-attachments')
         .getPublicUrl(filePath);
 
-      // 4. ファイルの種類を判定
       const type = file.type.startsWith('image/') ? 'image' : 'document';
 
-      // 5. messagesテーブルにインサート
       const { error: insertError } = await supabase
         .from('messages')
         .insert([{
           room_id: roomId,
           user: session.user.email,
-          text: file.name, // プレビュー用にファイル名を入れる
+          text: file.name, 
           file_url: publicUrl,
           file_type: type,
           is_system: false
@@ -365,7 +418,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     }
   };
 
-  // --- 4. スタイルヘルパー (isActiveを使うためここへ) ---
   const subTabButtonStyle = (isActive) => ({
     flex: 1, padding: '10px 0', cursor: 'pointer', border: 'none', background: 'none',
     fontSize: '0.85rem', color: isActive ? theme.colors.primary : theme.colors.textSub,
@@ -373,7 +425,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     transition: '0.2s', fontWeight: isActive ? 'bold' : 'normal'
   });
 
-  // --- 5. JSX部分 ---
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       <header style={styles.header}>
@@ -438,7 +489,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         </div>
       )}
 
-      {/* 招待バナー */}
+      {/* 1. グループ用の招待バナー */}
       {myStatus === 'pending' && (
         <div style={styles.inviteBanner}>
           <p style={{ fontSize: '0.85rem', margin: '0 0 10px 0', color: '#856404' }}>グループに招待されています。</p>
@@ -447,6 +498,34 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
             <button onClick={() => handleInviteResponse('rejected')} style={styles.rejectBtn}>拒否する</button>
           </div>
         </div>
+      )}
+
+      {/* 2. 【条件分岐修正】1対1チャット用の友達追加・ブロック・ブロック解除バナー */}
+      {!isGroupRoom && (
+        // A. ブロックも登録もしていない初期状態 ➔ 追加・ブロックボタン
+        (!isFriend && !isBlocked) ? (
+          <div style={styles.friendActionBanner}>
+            <p style={{ fontSize: '0.85rem', margin: '0 0 8px 0', color: '#333' }}>
+              このユーザーは連絡帳に登録されていません。
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button onClick={handleAddFriendFromChat} style={styles.addFriendBtn}>追加</button>
+              <button onClick={handleBlockFriendFromChat} style={styles.blockFriendBtn}>ブロック</button>
+            </div>
+          </div>
+        ) : (
+          // B. ブロック中の状態 ➔ ブロック解除ボタンのみ
+          isBlocked && (
+            <div style={styles.blockedActionBanner}>
+              <p style={{ fontSize: '0.85rem', margin: '0 0 8px 0', color: '#c92a2a' }}>
+                このユーザーをブロックしています。メッセージは受信されません。
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <button onClick={handleUnblockFriend} style={styles.unblockFriendBtn}>ブロック解除</button>
+              </div>
+            </div>
+          )
+        )
       )}
 
       {/* サブタブ */}
@@ -466,41 +545,44 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         {subTab === 'chat' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={styles.chatArea}>
-              {chatLog.map((msg, i) => {
-                if (msg.is_system) {
+              {chatLog
+                // ★【追加点】自分がブロック中の場合、その相手(friendEmail)から届いたメッセージを画面から排除（フィルター）する
+                .filter(msg => !(isBlocked && msg.user === friendEmail))
+                .map((msg, i) => {
+                  if (msg.is_system) {
+                    return (
+                      <div key={msg.id || i} style={styles.systemMsgContainer}>
+                        <span style={styles.systemMsgBadge}>{msg.text}</span>
+                      </div>
+                    );
+                  }
+                  const isMe = msg.user === session.user.email;
                   return (
-                    <div key={msg.id || i} style={styles.systemMsgContainer}>
-                      <span style={styles.systemMsgBadge}>{msg.text}</span>
+                    <div key={msg.id || i} style={{ textAlign: isMe ? 'right' : 'left', marginBottom: '15px' }}>
+                      {!isMe && <div style={styles.senderName}>{msg.profiles?.display_name || msg.user}</div>}
+                      <div style={{ 
+                        ...styles.bubble, 
+                        backgroundColor: isMe ? theme.colors.primary : '#fff', 
+                        color: isMe ? 'white' : 'black',
+                        boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
+                      }}>
+                        {msg.file_url ? (
+                          msg.file_type === 'image' ? (
+                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
+                              <img src={msg.file_url} alt="uploaded" style={styles.attachedImg} />
+                            </a>
+                          ) : (
+                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : theme.colors.primary, textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <span>📄</span><span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
+                            </a>
+                          )
+                        ) : (
+                          <span>{msg.text}</span>
+                        )}
+                      </div>
                     </div>
                   );
-                }
-                const isMe = msg.user === session.user.email;
-                return (
-                  <div key={msg.id || i} style={{ textAlign: isMe ? 'right' : 'left', marginBottom: '15px' }}>
-                    {!isMe && <div style={styles.senderName}>{msg.profiles?.display_name || msg.user}</div>}
-                    <div style={{ 
-                      ...styles.bubble, 
-                      backgroundColor: isMe ? theme.colors.primary : '#fff', 
-                      color: isMe ? 'white' : 'black',
-                      boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
-                    }}>
-                      {msg.file_url ? (
-                        msg.file_type === 'image' ? (
-                          <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
-                            <img src={msg.file_url} alt="uploaded" style={styles.attachedImg} />
-                          </a>
-                        ) : (
-                          <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : theme.colors.primary, textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <span>📄</span><span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
-                          </a>
-                        )
-                      ) : (
-                        <span>{msg.text}</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                })}
             </div>
             
             {/* メッセージ入力 */}
@@ -548,6 +630,16 @@ const styles = {
   inviteBanner: { backgroundColor: '#fff9db', padding: '15px', textAlign: 'center', borderBottom: '1px solid #ffe066' },
   joinBtn: { backgroundColor: '#28a745', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
   rejectBtn: { backgroundColor: theme.colors.error, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
+  
+  // 友達追加用のバナースタイル
+  friendActionBanner: { backgroundColor: '#e8f4fd', padding: '12px', textAlign: 'center', borderBottom: '1px solid #bce0fd' },
+  addFriendBtn: { backgroundColor: theme.colors.primary, color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
+  blockFriendBtn: { backgroundColor: '#6c757d', color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
+  
+  // 【追加点】ブロック中バナー & ブロック解除ボタンのスタイル
+  blockedActionBanner: { backgroundColor: '#fff5f5', padding: '12px', textAlign: 'center', borderBottom: '1px solid #ffe3e3' },
+  unblockFriendBtn: { backgroundColor: theme.colors.error, color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
+  
   chatArea: { flex: 1, overflowY: 'auto', backgroundColor: '#f0f2f5', padding: '15px' },
   systemMsgContainer: { textAlign: 'center', margin: '15px 0' },
   systemMsgBadge: { backgroundColor: '#d1d5db', color: '#4b5563', padding: '3px 12px', borderRadius: '12px', fontSize: '0.7rem' },
