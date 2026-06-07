@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { theme, commonStyles } from './theme';
 
@@ -7,21 +7,29 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
   const [friendsList, setFriendsList] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // 長押しモーダル用State（★こちらは残します）
+  const [selectedFriendForMenu, setSelectedFriendForMenu] = useState(null);
+  const longPressTimer = useRef(null);
+
+  // --- 1. メインの友達リスト（非表示もブロックもされていない人）を取得 ---
   const fetchFriends = useCallback(async () => {
     if (!session?.user?.id) return;
     
-    // ★修正: profilesテーブルからdisplay_nameを一緒に取得する
     const { data, error } = await supabase
       .from('friends')
       .select(`
         id,
         friend_email,
         created_at,
+        is_blocked,
+        is_hidden,
         profiles!friend_email (
           display_name
         )
       `)
       .eq('user_id', session.user.id)
+      .eq('is_blocked', false)
+      .eq('is_hidden', false)
       .order('created_at', { ascending: false });
 
     if (!error) {
@@ -35,6 +43,7 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     fetchFriends();
   }, [fetchFriends]);
 
+  // --- 2. 友達追加処理 ---
   const addFriend = async () => {
     if (!friendEmail.trim()) return;
     if (friendEmail === session.user.email) {
@@ -66,13 +75,18 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
       return;
     }
 
+    // もし過去に非表示やブロックにしていた場合はupsertで解除して再登録
     const { error } = await supabase
       .from('friends')
-      .insert([{ 
-        user_id: session.user.id, 
-        friend_email: friendEmail,
-        friend_user_id: profile.id 
-      }]);
+      .upsert([
+        { 
+          user_id: session.user.id, 
+          friend_email: friendEmail,
+          friend_user_id: profile.id,
+          is_blocked: false,
+          is_hidden: false
+        }
+      ], { onConflict: 'user_id,friend_email' });
 
     if (error) {
       alert('追加に失敗しました');
@@ -84,82 +98,102 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     setLoading(false);
   };
 
-  const deleteFriend = async (id) => {
-    if (!window.confirm('この友達を削除しますか？')) return;
-    const { error } = await supabase.from('friends').delete().eq('id', id);
-    if (!error) fetchFriends();
+  // --- 3. 長押しイベントのハンドラー ---
+  const handleTouchStart = (friend) => {
+    longPressTimer.current = setTimeout(() => {
+      setSelectedFriendForMenu(friend);
+    }, 500);
   };
 
-  // --- トーク開始時のルーム作成ロジック ---
-  // const handleTalkClick = async (friendEmail) => {
-  //   setLoading(true);
-  //   try {
-  //     // 1. 相手のプロフィールIDを取得
-  //     const { data: friendProfile } = await supabase
-  //       .from('profiles')
-  //       .select('id')
-  //       .eq('email', friendEmail)
-  //       .single();
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+    }
+  };
 
-  //     if (!friendProfile) {
-  //       alert("相手のプロフィールが見つかりません");
-  //       return;
-  //     }
+  // --- 4. 【メニュー機能】非表示処理 ---
+  const handleHideFriend = async (friend) => {
+    setSelectedFriendForMenu(null);
+    if (!window.confirm(`${friend.profiles?.display_name || friend.friend_email}さんを非表示にしますか？`)) return;
 
-  //     // 2. すでにこの相手との1対1ルームが存在するかチェック
-  //     const { data: existingMembers } = await supabase
-  //       .from('room_members')
-  //       .select('room_id')
-  //       .eq('user_id', session.user.id);
+    const { error } = await supabase
+      .from('friends')
+      .update({ is_hidden: true })
+      .eq('id', friend.id)
+      .eq('user_id', session.user.id);
 
-  //     let existingRoomId = null;
-  //     if (existingMembers && existingMembers.length > 0) {
-  //       const myRoomIds = existingMembers.map(m => m.room_id);
-  //       const { data: commonRoom } = await supabase
-  //         .from('room_members')
-  //         .select('room_id')
-  //         .in('room_id', myRoomIds)
-  //         .eq('user_id', friendProfile.id)
-  //         .maybeSingle();
-        
-  //       if (commonRoom) existingRoomId = commonRoom.room_id;
-  //     }
+    if (!error) {
+      alert("非表示にしました。");
+      fetchFriends();
+    } else {
+      alert("処理に失敗しました");
+    }
+  };
 
-  //     let finalRoomId = existingRoomId;
+  // --- 5. 【メニュー機能】ブロック処理 ---
+  const handleBlockFriend = async (friend) => {
+    setSelectedFriendForMenu(null);
+    if (!window.confirm(`${friend.profiles?.display_name || friend.friend_email}さんをブロックしますか？\nトークのメッセージが受信されなくなります。`)) return;
 
-  //     // 3. ルームがなければ新規作成
-  //     if (!existingRoomId) {
-  //       const { data: newRoom, error: roomError } = await supabase
-  //         .from('rooms')
-  //         .insert([{ name: '1on1' }])
-  //         .select()
-  //         .single();
+    const { error } = await supabase
+      .from('friends')
+      .update({ is_blocked: true })
+      .eq('id', friend.id)
+      .eq('user_id', session.user.id);
 
-  //       if (roomError) throw roomError;
-  //       finalRoomId = newRoom.id;
+    if (!error) {
+      alert("ブロックしました。");
+      fetchFriends();
+    } else {
+      alert("処理に失敗しました");
+    }
+  };
 
-  //       // 自分と相手を登録
-  //       await supabase.from('room_members').insert([
-  //         { room_id: finalRoomId, user_id: session.user.id, status: 'joined' },
-  //         { room_id: finalRoomId, user_id: friendProfile.id, status: 'joined' }
-  //       ]);
-  //     }
+  // --- 6. 【メニュー機能】友達削除（主キー特定に伴う最適化版） ---
+  const deleteFriend = async (recordId) => {
+    setSelectedFriendForMenu(null);
+    
+    if (!session?.user?.id) {
+      alert("セッションが切れています。再ログインしてください。");
+      return;
+    }
 
-  //     // 4. 親(App.js)の handleStartChat を呼び出す
-  //     onStartChat(friendEmail, finalRoomId);
+    if (!window.confirm('この友達を削除しますか？\n（連絡帳および管理リストから完全に消去されます）')) return;
+    
+    try {
+      // 確定したfriendsテーブルの主キー（id）を狙い撃ち、かつ安全のため user_id も縛る
+      const { error, count } = await supabase
+        .from('friends')
+        .delete({ count: 'exact' })
+        .eq('id', recordId)
+        .eq('user_id', session.user.id);
+      
+      if (error) {
+        alert("削除に失敗しました: " + error.message);
+        return;
+      }
 
-  //   } catch (err) {
-  //     console.error(err);
-  //     alert("トークの開始に失敗しました");
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
-  // --- 修正：トーク開始時のルーム作成ロジック ---
+      if (count === 0) {
+        alert("削除対象のデータが見つからなかったか、権限がありません。");
+        return;
+      }
+
+      alert("削除しました。");
+      
+      // UIの微小なハング防止のための短いディレイ
+      await new Promise(resolve => setTimeout(resolve, 100));
+      fetchFriends();
+
+    } catch (e) {
+      console.error("友達削除中に例外が発生しました:", e);
+    }
+  };
+
+  // --- 7. トーク開始時のルーム作成ロジック ---
   const handleTalkClick = async (friendEmail) => {
+    if (loading) return; // 🚀 連打によるルーム二重作成を防止
     setLoading(true);
     try {
-      // 1. 相手の情報を1回だけ取得（ループ防止のためsingleで完結させる）
       const { data: friendProfile, error: profError } = await supabase
         .from('profiles')
         .select('id, display_name, email')
@@ -170,14 +204,10 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
         throw new Error("相手のプロフィールが見つかりません");
       }
 
-      // 表示名を確定（名前があれば名前、なければメール）
       const opponentName = friendProfile.display_name || friendProfile.email;
-
-      // 2. ペアキー生成
       const ids = [session.user.id, friendProfile.id].sort();
       const pairKey = `${ids[0]}_${ids[1]}`;
 
-      // 3. 既存検索
       const { data: existingRoom } = await supabase
         .from('rooms')
         .select('id')
@@ -186,13 +216,11 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
 
       let finalRoomId = existingRoom?.id;
 
-      // 4. 新規作成
       if (!finalRoomId) {
-        // nameには相手の名前を入れておくが、is_group: false を重要視する
         const { data: newRoom, error: roomError } = await supabase
           .from('rooms')
           .insert([{ 
-            name: opponentName, // 固定値ではなく相手の名を入れる
+            name: opponentName, 
             pair_key: pairKey,
             is_group: false 
           }])
@@ -219,19 +247,21 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
   };
 
   return (
-    <div style={{ padding: '10px' }}>
+    <div style={{ padding: '10px', height: '100%', position: 'relative' }}>
       <div style={styles.headerContainer}>
         <h3 style={{ margin: 0, paddingBottom: '10px' }}>👥 連絡帳</h3>
+        
         <button 
           onClick={onOpenSettings} 
-          style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' }}
+          style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', paddingBottom: '10px' }}
           title="設定"
         >
           ⚙️
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '5px', marginBottom: '20px' }}>
+      {/* 友達追加入力フォーム */}
+      <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
         <input 
           id="friend-search"
           name="friend-search"
@@ -251,13 +281,25 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
         </button>
       </div>
 
+      <p style={{ fontSize: '0.75rem', color: theme.colors.textSub, margin: '0 0 10px 5px' }}>
+        💡 友達の名前を長押しすると、メニューを開きます。
+      </p>
+
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {friendsList.length === 0 && (
           <p style={{ color: theme.colors.textSub, textAlign: 'center', marginTop: '20px' }}>友達がまだいません</p>
         )}
         {friendsList.map(f => (
-          <li key={f.id} style={styles.friendItem}>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <li 
+            key={f.id} 
+            style={styles.friendItem}
+            onTouchStart={() => handleTouchStart(f)}
+            onTouchEnd={handleTouchEnd}
+            onMouseDown={() => handleTouchStart(f)}
+            onMouseUp={handleTouchEnd}
+            onMouseLeave={handleTouchEnd}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, cursor: 'pointer' }}>
               <span style={{ fontWeight: 'bold', fontSize: '1rem', color: theme.colors.textMain }}>
                 {f.profiles?.display_name || '名前未設定'}
               </span>
@@ -265,29 +307,49 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
                 {f.friend_email}
               </span>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button 
-                onClick={() => handleTalkClick(f.friend_email)} 
-                disabled={loading}
-                style={{ ...commonStyles.button, width: 'auto', padding: '5px 12px', fontSize: '0.8rem', backgroundColor: '#06C755', color: 'white' }}
-              >
-                トーク
-              </button>
-              <button 
-                onClick={() => deleteFriend(f.id)} 
-                style={{ ...commonStyles.button, width: 'auto', padding: '5px 12px', fontSize: '0.8rem', backgroundColor: '#dc3545', color: 'white', }}
-              >
-                削除
-              </button>
-            </div>
+            <span style={{ fontSize: '1.2rem', color: '#ccc', paddingRight: '10px' }}>⋮</span>
           </li>
         ))}
       </ul>
+
+      {/* 長押しコンテキストメニューモーダル（★こちらも残しています） */}
+      {selectedFriendForMenu && (
+        <div style={styles.modalOverlay} onClick={() => setSelectedFriendForMenu(null)}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <h4 style={styles.modalTitle}>
+              {selectedFriendForMenu.profiles?.display_name || selectedFriendForMenu.friend_email}
+            </h4>
+            <div style={styles.menuButtonList}>
+              <button 
+                onClick={() => {
+                  const email = selectedFriendForMenu.friend_email;
+                  setSelectedFriendForMenu(null);
+                  handleTalkClick(email);
+                }} 
+                style={{ ...styles.menuBtn, color: '#06C755', fontWeight: 'bold' }}
+              >
+                トークを開く
+              </button>
+              <button onClick={() => handleHideFriend(selectedFriendForMenu)} style={styles.menuBtn}>
+                非表示
+              </button>
+              <button onClick={() => handleBlockFriend(selectedFriendForMenu)} style={{ ...styles.menuBtn, color: theme.colors.error }}>
+                ブロック
+              </button>
+              <button onClick={() => deleteFriend(selectedFriendForMenu.id)} style={{ ...styles.menuBtn, color: '#777' }}>
+                友達削除
+              </button>
+              <button onClick={() => setSelectedFriendForMenu(null)} style={{ ...styles.menuBtn, backgroundColor: '#f1f3f5' }}>
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-// --- 3. スタイル定義（基準：骨組み・再利用構造のみ） ---
 const styles = {
   headerContainer: {
     display: 'flex', 
@@ -301,7 +363,27 @@ const styles = {
     justifyContent: 'space-between', 
     alignItems: 'center', 
     padding: '15px 0', 
-    borderBottom: `1px solid ${theme.colors.border}`
+    borderBottom: `1px solid ${theme.colors.border}`,
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    borderRadius: '4px'
+  },
+  modalOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
+  },
+  modalContent: {
+    backgroundColor: '#fff', borderRadius: '12px', width: '80%', maxWidth: '280px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column'
+  },
+  modalTitle: {
+    margin: 0, padding: '15px', fontSize: '0.95rem', textAlign: 'center', borderBottom: '1px solid #eee', color: '#333'
+  },
+  menuButtonList: {
+    display: 'flex', flexDirection: 'column'
+  },
+  menuBtn: {
+    padding: '14px', border: 'none', background: 'none', fontSize: '0.9rem', cursor: 'pointer', textAlign: 'center',
+    borderBottom: '1px solid #f1f3f5', outline: 'none'
   }
 };
 
