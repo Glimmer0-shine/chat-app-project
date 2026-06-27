@@ -24,14 +24,13 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   const [isBlocked, setIsBlocked] = useState(false);
   const [isGroupRoom, setIsGroupRoom] = useState(false);
 
-  const getRoomId = useCallback(() => {
-    if (propsRoomId) return propsRoomId;
-    if (!session?.user?.email || !friendEmail) return 'public';
-    const sorted = [session.user.email, friendEmail].sort();
-    return `${sorted[0]}-${sorted[1]}`;
-  }, [propsRoomId, session, friendEmail]);
+  // const getRoomId = useCallback(() => {
+  //   if (propsRoomId) return propsRoomId;
+  //   if (!session?.user?.email || !friendEmail) return 'public';
+  // }, [propsRoomId, session, friendEmail]);
 
-  const roomId = getRoomId();
+  // const roomId = getRoomId();
+  // const roomId = propsRoomId;
   
   const fetchMembers = useCallback(async (shouldOpenModal = false) => {
     if (!propsRoomId) return;
@@ -77,43 +76,62 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
           .single();
         if (memberData) setMyStatus(memberData.status);
       } else {
-        setMyStatus('joined');
+        alert('このチャットに参加するにはログインが必要です。');
+        return;
       }
 
       const { data: roomData } = await supabase
-        .from('rooms')
-        .select('name, is_group')
-        .eq('id', propsRoomId)
+        // .from('rooms')
+        // .select('name, is_group')
+        // .eq('id', propsRoomId)
+        // .single();
+
+        .from('room_members')
+        .select('rooms ( name, is_group )')
+        .eq('room_id', propsRoomId)
+        .eq('user_id', session.user.id)
         .single();
 
-      if (roomData) {
-        setIsGroupRoom(roomData.is_group);
+      if (roomData && roomData.rooms) { // 💡 roomsが存在するかチェック
+        setIsGroupRoom(roomData.rooms.is_group); // 💡 .rooms.is_group に修正
 
-        if (roomData.is_group === false) {
+        if (roomData.rooms.is_group === false) {
           const { data: members, error: rpcError } = await supabase
             .rpc('get_room_members', { p_room_id: propsRoomId });
 
+          let foundName = '';
+
           if (!rpcError && members) {
             const opponent = members.find(u => u.user_id !== session.user.id);
+
             if (opponent && opponent.profiles) {
-              setFriendDisplayName(opponent.profiles.display_name || opponent.profiles.email);
-            } else {
-              setFriendDisplayName(friendEmail || "トーク相手");
+              const prof = typeof opponent.profiles === 'string' ? JSON.parse(opponent.profiles) : opponent.profiles;
+              foundName = prof.display_name;
             }
           }
+
+          if (!foundName && friendEmail) {
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('display_name')
+              .eq('email', friendEmail)
+              .maybeSingle();
+            if (prof) foundName = prof.display_name;
+          }
+
+          setFriendDisplayName(foundName || friendEmail || "トーク相手");
 
           // 【追加点】友達リストにおける登録・ブロック状態の取得
           if (friendEmail) {
             const { data: friendData } = await supabase
               .from('friends')
-              .select('*')
+              // .select('*')
+              .select('is_blocked')
               .eq('user_id', session.user.id)
               .eq('friend_email', friendEmail)
               .maybeSingle();
 
             if (friendData) {
-              // 登録されているがブロック中かどうかに応じてisFriendを制御
-              // (ブロック解除後に「追加」に戻したいので、is_blockedがtrueなら友達としては一旦false扱いにする)
               setIsFriend(!friendData.is_blocked);
               setIsBlocked(!!friendData.is_blocked);
             } else {
@@ -122,10 +140,10 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
             }
           }
         } else {
-          setFriendDisplayName(roomData.name);
+          setFriendDisplayName(roomData.rooms.name);
         }
       }
-      
+
       fetchMembers();
     };
 
@@ -140,7 +158,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       const { data: messages, error: msgError } = await supabase
         .from('messages')
         .select('*')
-        .eq('room_id', roomId)
+        // .eq('room_id', roomId)
+        .eq('room_id', propsRoomId)
         .order('created_at', { ascending: true });
 
       if (msgError) return;
@@ -161,21 +180,40 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     fetchMessages();
 
     const channel = supabase
-      .channel(roomId)
+      // .channel(roomId)
+      .channel(propsRoomId)
       .on('postgres_changes', { 
         event: 'INSERT', 
         schema: 'public', 
         table: 'messages', 
-        filter: `room_id=eq.${roomId}` 
-      }, (payload) => {
+        // filter: `room_id=eq.${roomId}` 
+      }, async (payload) => {
+        // if (payload.new.room_id !== roomId) return;
+        if (payload.new.room_id !== propsRoomId) return;
+
+        // 1. 新しく届いたメッセージの送信者(user)のニックネームを、profilesテーブルから1件だけ取得
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('email, display_name')
+          .eq('email', payload.new.user)
+          .maybeSingle();
+
+        // 2. 届いたメッセージのデータに、今取得した profiles 情報を合体させる
+        const enrichedNewMessage = {
+          ...payload.new,
+          profiles: prof || { email: payload.new.user, display_name: payload.new.user }
+        };
+
+        // 3. 画面のチャットログ（配列）に追加する
         setChatLog((prev) => {
           const exists = prev.find((msg) => msg.id === payload.new.id);
           if (exists) return prev;
-          return [...prev, payload.new];
+          return [...prev, enrichedNewMessage]; // ニックネームが合体したデータを画面に流す
         });
       }).subscribe();
     return () => supabase.removeChannel(channel);
-  }, [session, roomId, friendEmail, propsRoomId]);
+  // }, [session, roomId, friendEmail, propsRoomId]);
+  }, [session, friendEmail, propsRoomId]);
 
   // 【追加点】友達追加処理
   const handleAddFriendFromChat = async () => {
@@ -373,7 +411,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     const { error } = await supabase.from('messages').insert([{ 
       text: message, 
       user: session.user.email, 
-      room_id: roomId 
+      // room_id: roomId
+      room_id: propsRoomId
     }]);
     if (!error) setMessage('');
   };
@@ -384,7 +423,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-    const filePath = `${roomId}/${fileName}`;
+    // const filePath = `${roomId}/${fileName}`;
+    const filePath = `${propsRoomId}/${fileName}`;
 
     try {
       const { error: uploadError } = await supabase.storage
@@ -393,19 +433,42 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
+      // const { data: { publicUrl } } = supabase.storage
+      //   .from('chat-attachments')
+      //   .getPublicUrl(filePath);
+
+      // const type = file.type.startsWith('image/') ? 'image' : 'document';
+
+      // const { error: insertError } = await supabase
+      //   .from('messages')
+      //   .insert([{
+      //     room_id: roomId,
+      //     user: session.user.email,
+      //     text: file.name, 
+      //     file_url: publicUrl,
+      //     file_type: type,
+      //     is_system: false
+      //   }]);
+
+      // 2. ✨ 3ヶ月（7776000秒）有効な署名付きURLを発行
+      const { data: signedData, error: signError } = await supabase.storage
         .from('chat-attachments')
-        .getPublicUrl(filePath);
+        .createSignedUrl(filePath, 7776000); 
+
+      if (signError) throw signError;
+      const secureUrl = signedData.signedUrl;
 
       const type = file.type.startsWith('image/') ? 'image' : 'document';
 
+      // 3. データベースに保存
       const { error: insertError } = await supabase
         .from('messages')
         .insert([{
-          room_id: roomId,
+          // room_id: roomId,
+          room_id: propsRoomId,
           user: session.user.email,
           text: file.name, 
-          file_url: publicUrl,
+          file_url: secureUrl, // 💡 3ヶ月有効なURLが保存されます
           file_type: type,
           is_system: false
         }]);
@@ -603,9 +666,12 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         )}
         {myStatus === 'joined' && (
           <>
-            {subTab === 'calendar' && <Calendar session={session} roomId={roomId} />}
+            {/* {subTab === 'calendar' && <Calendar session={session} roomId={roomId} />}
             {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} roomId={roomId} />}
-            {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} roomId={roomId} />}
+            {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} roomId={roomId} />} */}
+            {subTab === 'calendar' && <Calendar session={session} roomId={propsRoomId} />}
+            {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} roomId={propsRoomId} />}
+            {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} roomId={propsRoomId} />}
           </>
         )}
       </div>
@@ -638,7 +704,7 @@ const styles = {
   
   // 【追加点】ブロック中バナー & ブロック解除ボタンのスタイル
   blockedActionBanner: { backgroundColor: '#fff5f5', padding: '12px', textAlign: 'center', borderBottom: '1px solid #ffe3e3' },
-  unblockFriendBtn: { backgroundColor: theme.colors.error, color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
+  unblockFriendBtn: { backgroundColor: theme.colors.success, color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
   
   chatArea: { flex: 1, overflowY: 'auto', backgroundColor: '#f0f2f5', padding: '15px' },
   systemMsgContainer: { textAlign: 'center', margin: '15px 0' },

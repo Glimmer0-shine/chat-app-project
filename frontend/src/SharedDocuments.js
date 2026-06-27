@@ -6,23 +6,25 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState([]);
 
-  // ストレージの保存先フォルダ名を決定
-  const getStoragePath = useCallback(() => {
-    if (propsRoomId) return propsRoomId; // グループならそのUUID
-    if (!session?.user?.email || !friendEmail) return 'public';
-    const sorted = [session.user.email, friendEmail].sort();
-    return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_'); // 1対1用
-  }, [session, friendEmail, propsRoomId]);
+  // // ストレージの保存先フォルダ名を決定
+  // const getStoragePath = useCallback(() => {
+  //   if (propsRoomId) return propsRoomId; // グループならそのUUID
+  //   if (!session?.user?.email || !friendEmail) return 'public';
+  //   const sorted = [session.user.email, friendEmail].sort();
+  //   return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_'); // 1対1用
+  // }, [session, friendEmail, propsRoomId]);
 
-  // 通知を送る先のトークルームIDを決定
-  const getChatRoomId = useCallback(() => {
-    if (propsRoomId) return propsRoomId; // グループチャットID
-    const sorted = [session.user.email, friendEmail].sort();
-    return `${sorted[0]}-${sorted[1]}`; // 1対1チャットID
-  }, [session, friendEmail, propsRoomId]);
+  // // 通知を送る先のトークルームIDを決定
+  // const getChatRoomId = useCallback(() => {
+  //   if (propsRoomId) return propsRoomId; // グループチャットID
+  //   const sorted = [session.user.email, friendEmail].sort();
+  //   return `${sorted[0]}-${sorted[1]}`; // 1対1チャットID
+  // }, [session, friendEmail, propsRoomId]);
 
-  const storagePath = getStoragePath();
-  const chatRoomId = getChatRoomId();
+  // const storagePath = getStoragePath();
+  const storagePath = propsRoomId;
+  // const chatRoomId = getChatRoomId();
+  const chatRoomId = propsRoomId;
 
   // ファイル一覧の取得
   const fetchFiles = useCallback(async () => {
@@ -34,11 +36,50 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
         order: { column: 'created_at', ascending: false } 
       });
 
+  //   if (error) {
+  //     console.error('ファイル取得エラー:', error.message);
+  //   } else {
+  //     const filesOnly = data?.filter(item => item.metadata) || [];
+  //     setFiles(filesOnly);
+  //   }
+  // }, [storagePath]);
+
     if (error) {
       console.error('ファイル取得エラー:', error.message);
-    } else {
-      const filesOnly = data?.filter(item => item.metadata) || [];
-      setFiles(filesOnly);
+      return; // エラー時はここで処理を抜ける
+    }
+
+    // 2. 元のコード通り、メタデータがあるもの（ファイルのみ）に絞り込む
+    const filesOnly = data?.filter(item => item.metadata) || [];
+
+    if (filesOnly.length === 0) {
+      setFiles([]);
+      return;
+    }
+
+    try {
+      // 3. ✨ 絞り込んだファイル全員分の「ストレージ内のフルパス」の配列を作る
+      const filePaths = filesOnly.map(item => `${storagePath}/${item.name}`);
+
+      // 4. ✨ 5分間（300秒）有効な署名付きURLを1回の通信でまとめて一括発行する
+      const { data: signedUrls, error: signError } = await supabase.storage
+        .from('shared-documents')
+        .createSignedUrls(filePaths, 300);
+
+      if (signError) throw signError;
+
+      // 5. ✨ 元のファイルデータに、生成した署名付きURL（downloadUrl）を合体させる
+      const formattedFiles = filesOnly.map((item, index) => ({
+        ...item,
+        // signedUrls[index].signedUrl に安全なURLが入っています
+        downloadUrl: signedUrls[index]?.signedUrl 
+      }));
+
+      // 6. 最終的なデータをstateにセットする
+      setFiles(formattedFiles);
+
+    } catch (e) {
+      console.error("署名付きURL一括生成エラー:", e);
     }
   }, [storagePath]);
 

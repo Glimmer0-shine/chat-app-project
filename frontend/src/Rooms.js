@@ -19,7 +19,7 @@ const Rooms = ({ session, onSelectRoom }) => {
 
     try {
       // 💡 修正：is_hidden が false かつ is_deleted が false（またはnull）のものだけ取得
-      const { data: memberData, error: memberError } = await supabase
+      const { data: roomData, error: roomError } = await supabase
         .from('room_members')
         .select(`
           room_id,
@@ -32,9 +32,9 @@ const Rooms = ({ session, onSelectRoom }) => {
         .eq('is_hidden', false)
         .eq('is_deleted', false);
 
-      if (memberError) throw memberError;
+      if (roomError) throw roomError;
 
-      const formattedRooms = await Promise.all(memberData.map(async (m) => {
+      const formattedRooms = await Promise.all(roomData.map(async (m) => {
         const roomId = m.room_id;
         const isGroup = m.rooms?.is_group ?? true; 
         let displayName = m.rooms?.name || '不明なルーム';
@@ -82,8 +82,28 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
   }, [session]);
 
+  // useEffect(() => {
+  //   if (session?.user?.id) {
+  //     fetchAllRooms();
+  //     const channel = supabase
+  //       .channel(`room_changes_${session.user.id}`)
+  //       .on('postgres_changes', 
+  //           { event: '*', schema: 'public', table: 'room_members', filter: `user_id=eq.${session.user.id}` }, 
+  //           () => fetchAllRooms()
+  //       )
+  //       .subscribe();
+  //     return () => supabase.removeChannel(channel);
+  //   }
+  // }, [session?.user?.id, fetchAllRooms]);
+
+  // ↓RLSの設定が上手くいったら、上記を消して下記を採用する。動作確認を行う。
   useEffect(() => {
-    if (session?.user?.id) {
+    // 💡 session.access_token があるかもチェック条件に加える
+    if (session?.user?.id && session?.access_token) {
+      
+      // 💡 通信を開始する前に、明示的に入館証（トークン）をセットする！
+      supabase.realtime.setAuth(session.access_token);
+
       fetchAllRooms();
       const channel = supabase
         .channel(`room_changes_${session.user.id}`)
@@ -94,7 +114,7 @@ const Rooms = ({ session, onSelectRoom }) => {
         .subscribe();
       return () => supabase.removeChannel(channel);
     }
-  }, [session?.user?.id, fetchAllRooms]);
+  }, [session, fetchAllRooms]); // 💡 依存配列に session 全体を指定
 
   // --- グループ作成 ---
   const createGroup = async () => {
@@ -161,20 +181,75 @@ const Rooms = ({ session, onSelectRoom }) => {
     closeContextMenu();
   };
 
+  // const fetchHiddenRooms = async () => {
+  //   // 💡 修正：非表示(is_hidden=true)だが、まだ削除されていない(is_deleted=false)ものを取得
+  //   const { data, error } = await supabase
+  //     .from('room_members')
+  //     .select(`
+  //       room_id,
+  //       rooms ( name )
+  //     `)
+  //     .eq('user_id', session.user.id)
+  //     .eq('is_hidden', true)
+  //     .eq('is_deleted', false);
+
+  //   if (!error) setHiddenRooms(data || []);
+  //   setIsHiddenListOpen(true);
+  // };
+
   const fetchHiddenRooms = async () => {
-    // 💡 修正：非表示(is_hidden=true)だが、まだ削除されていない(is_deleted=false)ものを取得
+    // 💡 修正：is_hidden=true かつ is_deleted=false のものを取得
+    // 後続の動的名前取得のために、rooms から is_group も一緒にセレクトします
     const { data, error } = await supabase
       .from('room_members')
       .select(`
         room_id,
-        rooms ( name )
+        rooms ( name, is_group )
       `)
       .eq('user_id', session.user.id)
       .eq('is_hidden', true)
       .eq('is_deleted', false);
 
-    if (!error) setHiddenRooms(data || []);
-    setIsHiddenListOpen(true);
+    if (error) {
+      console.error("非表示トーク取得エラー:", error);
+      return;
+    }
+
+    try {
+      // ✨ 取得した非表示ルーム一覧をループして、個人チャットの場合は相手の名前を動的に取得する
+      const formattedHiddenRooms = await Promise.all((data || []).map(async (hr) => {
+        const roomId = hr.room_id;
+        const isGroup = hr.rooms?.is_group ?? true;
+        let displayName = hr.rooms?.name || '不明なルーム';
+
+        // 💡 グループでない（個人チャット）なら、通常一覧と同じロジックで相手の最新名を取得
+        if (!isGroup) {
+          const { data: members, error: rpcError } = await supabase
+            .rpc('get_room_members', { p_room_id: roomId });
+
+          if (!rpcError && members) {
+            const opponent = members.find(u => u.user_id !== session.user.id);
+            if (opponent && opponent.profiles) {
+              // ニックネームがあればそれ、無ければメールアドレスを表示
+              displayName = opponent.profiles.display_name || opponent.profiles.email;
+            } else {
+              displayName = "相手不在";
+            }
+          }
+        }
+
+        // モーダル表示用にデータを整形して返す
+        return {
+          room_id: roomId,
+          displayName: displayName // ✨ 動的に作った名前を格納
+        };
+      }));
+
+      setHiddenRooms(formattedHiddenRooms);
+      setIsHiddenListOpen(true);
+    } catch (err) {
+      console.error("非表示リストの整形エラー:", err);
+    }
   };
 
   const unhideRoom = async (roomId) => {
@@ -280,7 +355,8 @@ const Rooms = ({ session, onSelectRoom }) => {
             ) : (
               hiddenRooms.map((hr) => (
                 <div key={hr.room_id} style={styles.hiddenRoomItem}>
-                  <span style={{ fontSize: '0.9rem' }}>{hr.rooms?.name === '1on1' ? '1対1トーク' : hr.rooms?.name}</span>
+                  {/* <span style={{ fontSize: '0.9rem' }}>{hr.rooms?.name === '1on1' ? '1対1トーク' : hr.rooms?.name}</span> */}
+                  <span style={{ fontSize: '0.9rem' }}>{hr.displayName}</span>
                   <div style={{ display: 'flex', gap: '5px' }}>
                     <button onClick={() => unhideRoom(hr.room_id)} style={styles.unhideBtn}>再表示</button>
                     {/* 💡 削除ボタンを追加 */}
