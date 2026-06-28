@@ -45,7 +45,7 @@ const Calendar = ({ session, roomId }) => {
             setEvents((prev) => prev.some(e => e.id === payload.new.id) ? prev : [...prev, payload.new]);
           } 
           else if (payload.eventType === 'DELETE') {
-            setEvents((prev) => prev.filter(e => e.id !== payload.old.id));
+            setEvents((prev) => prev.filter(e => e.id !== Number(payload.old.id)));
           } 
           else if (payload.eventType === 'UPDATE') {
             setEvents((prev) => prev.map(e => e.id === payload.new.id ? payload.new : e));
@@ -96,15 +96,50 @@ const Calendar = ({ session, roomId }) => {
     }
   };
 
+  // const updateEvent = async (id, updates) => {
+  //   const { error } = await supabase.from('events').update(updates).eq('id', id);
+  //   if (!error) fetchEvents();
+  // };
+
+  // const deleteEvent = async (id) => {
+  //   if (!window.confirm("この予定を削除しますか？")) return;
+  //   const { error } = await supabase.from('events').delete().eq('id', id);
+  //   if (!error) fetchEvents();
+  // };
+
+  // 💡 更新処理の修正：通知対応 ＆ 汎用的なテキスト組み立て
   const updateEvent = async (id, updates) => {
+    // 1. 通知用に、変更前のイベント情報を特定する
+    const targetEvent = events.find(e => e.id === id);
+    if (!targetEvent) return;
+
     const { error } = await supabase.from('events').update(updates).eq('id', id);
-    if (!error) fetchEvents();
+    if (!error) {
+      // 2. 何が変更されたかに応じて、通知メッセージを動的に作成
+      let notificationText = `📝 予定変更 [${targetEvent.title}]: `;
+      if (updates.title) notificationText += `タイトルを「${updates.title}」に変更`;
+      if (updates.event_time) notificationText += `時刻を ${updates.event_time} に変更`;
+      if (updates.event_date) notificationText += `日付を ${updates.event_date} に変更`;
+      if (updates.color) notificationText += `ラベルの色を変更`;
+
+      await sendSystemNotification(notificationText);
+      fetchEvents();
+    }
   };
 
+  // 💡 削除処理の修正：通知対応
   const deleteEvent = async (id) => {
-    if (!window.confirm("この予定を削除しますか？")) return;
+    // 1. 通知用に、削除する前のイベントタイトルを取得しておく
+    const targetEvent = events.find(e => e.id === id);
+    if (!targetEvent) return;
+
+    if (!window.confirm(`この予定「${targetEvent.title}」を削除しますか？`)) return;
+
     const { error } = await supabase.from('events').delete().eq('id', id);
-    if (!error) fetchEvents();
+    if (!error) {
+      await sendSystemNotification(`🗑️ 予定削除: ${targetEvent.title} (${targetEvent.event_time?.slice(0, 5)})`);
+      fetchEvents();
+    }
   };
 
   return (
@@ -215,8 +250,9 @@ const Calendar = ({ session, roomId }) => {
                     <span style={{ ...styles.eventTitle, backgroundColor: e.color }}>{e.title}</span>
                   </div>
                   <div style={{ display: 'flex', gap: '5px' }}>
-                    <button onClick={() => { const t = prompt("時刻(HH:MM)", e.event_time); if(t) updateEvent(e.id, {event_time: t}); }} style={styles.actionBtn}>時刻</button>
+                    <button onClick={() => { const t = prompt("時刻(HH:MM)", e.event_time); if(t) updateEvent(e.id, {event_time: t}); }} style={styles.actionBtn}>時刻変更</button>
                     <button onClick={() => { const d = prompt("日付(YYYY-MM-DD)", e.event_date); if(d) updateEvent(e.id, {event_date: d}); }} style={styles.actionBtn}>移動</button>
+                    <button onClick={() => { const newTitle = prompt("新しい予定タイトル", e.title); if(newTitle && newTitle.trim()) updateEvent(e.id, { title: newTitle.trim() }); }} style={styles.actionBtn}>タイトル変更</button>
                     <button onClick={() => deleteEvent(e.id)} style={{ ...styles.actionBtn, color: 'red' }}>削除</button>
                   </div>
                 </div>

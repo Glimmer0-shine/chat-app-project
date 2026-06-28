@@ -52,11 +52,36 @@ const Profile = ({ session, onBack }) => {
           .eq('id', session.user.id)
           .maybeSingle(); 
 
+        // if (isMounted && !error && data) {
+        //   setProfile(data);
+        //   setDisplayName(data.display_name || '');
+        //   setAvatarUrl(data.avatar_url || '');
+        // }
+
         if (isMounted && !error && data) {
+          // ① まず、取得したオブジェクト（全カラム情報）をそのままセット
           setProfile(data);
           setDisplayName(data.display_name || '');
-          setAvatarUrl(data.avatar_url || '');
+
+          // ② データベースに保存されている「パス（住所）」があるか確認
+          if (data.avatar_url) {
+            // パスを元に、5分間有効な署名付きURLを取得する
+            const { data: signedData, error: signError } = await supabase.storage
+              .from('avatars')
+              .createSignedUrl(data.avatar_url, 300); // 5分間有効
+
+            if (!signError && signedData && isMounted) {
+              // 💡 画面表示用のstate（avatarUrl）にだけ、署名付きURLをセットする(profiles.avatar_urlの更新の必要が無い)
+              setAvatarUrl(signedData.signedUrl);
+            } else if (isMounted) {
+              setAvatarUrl(''); // URL作成に失敗した場合は空にする
+            }
+          } else {
+            setAvatarUrl(''); // そもそも画像が未登録なら空にする
+          }
         }
+
+
       } catch (e) {
         console.error("プロフィール取得例外:", e);
       } finally {
@@ -140,16 +165,33 @@ const Profile = ({ session, onBack }) => {
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
+      // const { data: { publicUrl } } = supabase.storage
+      //   .from('avatars')
+      //   .getPublicUrl(filePath);
 
+      // await supabase
+      //   .from('profiles')
+      //   .update({ avatar_url: publicUrl })
+      //   .eq('id', session.user.id);
+
+      // setAvatarUrl(publicUrl);
+
+      // ② データベースには「公開URL」ではなく「filePath（パス）」を保存する
       await supabase
         .from('profiles')
-        .update({ avatar_url: publicUrl })
+        .update({ avatar_url: filePath }) // 💡 ここを filePath に変更
         .eq('id', session.user.id);
 
-      setAvatarUrl(publicUrl);
+      // ③ 【新設】画面を更新するために、その場で5分間有効な署名付きURLを即座に発行する
+      const { data: signedData, error: signError } = await supabase.storage
+        .from('avatars')
+        .createSignedUrl(filePath, 300); // 5分間有効
+
+      if (signError) throw signError;
+
+      // ④ 発行された署名付きURLを state にセットして画面を即時書き換える
+      setAvatarUrl(signedData.signedUrl);
+
       alert('プロフィール画像を更新しました！');
     } catch (error) {
       alert('画像アップロード失敗: ' + error.message);

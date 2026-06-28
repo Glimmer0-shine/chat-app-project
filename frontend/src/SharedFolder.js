@@ -7,23 +7,25 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
   const [images, setImages] = useState([]);
 
-  // ストレージの保存先パス（フォルダ名）を決定
-  const getStoragePath = useCallback(() => {
-    if (propsRoomId) return propsRoomId; // グループならそのID
-    if (!session?.user?.email || !friendEmail) return 'public';
-    const sorted = [session.user.email, friendEmail].sort();
-    return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_');
-  }, [session, friendEmail, propsRoomId]);
+  // // ストレージの保存先パス（フォルダ名）を決定
+  // const getStoragePath = useCallback(() => {
+  //   if (propsRoomId) return propsRoomId; // グループならそのID
+  //   if (!session?.user?.email || !friendEmail) return 'public';
+  //   const sorted = [session.user.email, friendEmail].sort();
+  //   return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_');
+  // }, [session, friendEmail, propsRoomId]);
 
-  // 通知を送る先のトークルームIDを決定
-  const getChatRoomId = useCallback(() => {
-    if (propsRoomId) return propsRoomId; // グループならそのID
-    const sorted = [session.user.email, friendEmail].sort();
-    return `${sorted[0]}-${sorted[1]}`;
-  }, [session, friendEmail, propsRoomId]);
+  // // 通知を送る先のトークルームIDを決定
+  // const getChatRoomId = useCallback(() => {
+  //   if (propsRoomId) return propsRoomId; // グループならそのID
+  //   const sorted = [session.user.email, friendEmail].sort();
+  //   return `${sorted[0]}-${sorted[1]}`;
+  // }, [session, friendEmail, propsRoomId]);
 
-  const storagePath = getStoragePath();
-  const chatRoomId = getChatRoomId();
+  // const storagePath = getStoragePath();
+  const storagePath = propsRoomId;
+  // const chatRoomId = getChatRoomId();
+  const chatRoomId = propsRoomId;
 
   // 画像一覧の取得
   const fetchImages = useCallback(async () => {
@@ -35,12 +37,51 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
         order: { column: 'created_at', ascending: false } 
       });
 
+  //   if (error) {
+  //     console.error('画像取得エラー:', error.message);
+  //   } else {
+  //     // フォルダを除外してファイルのみセット
+  //     const filesOnly = data?.filter(item => item.metadata) || [];
+  //     setImages(filesOnly);
+  //   }
+  // }, [storagePath]);
+
     if (error) {
       console.error('画像取得エラー:', error.message);
-    } else {
-      // フォルダを除外してファイルのみセット
-      const filesOnly = data?.filter(item => item.metadata) || [];
-      setImages(filesOnly);
+      return; // エラー時は処理を抜ける
+    }
+
+    // 2. 元のコード通り、フォルダを除外してファイルのみに絞り込む
+    const filesOnly = data?.filter(item => item.metadata) || [];
+
+    if (filesOnly.length === 0) {
+      setImages([]);
+      return;
+    }
+
+    try {
+      // 3. 絞り込んだ画像全員分の「ストレージ内のフルパス」の配列を作る
+      const filePaths = filesOnly.map(item => `${storagePath}/${item.name}`);
+
+      // 4. 5分間（300秒）有効な署名付きURLをまとめて一括発行する
+      const { data: signedUrls, error: signError } = await supabase.storage
+        .from('shared-folder')
+        .createSignedUrls(filePaths, 300);
+
+      if (signError) throw signError;
+
+      // 5. 元のデータ構造に、生成した署名付きURL（displayUrl）を合体させる
+      const formattedImages = filesOnly.map((item, index) => ({
+        ...item,
+        // signedUrls[index].signedUrl に安全なURLが入っています
+        displayUrl: signedUrls[index]?.signedUrl 
+      }));
+
+      // 6. 最終的なデータをstateにセットする
+      setImages(formattedImages);
+
+    } catch (e) {
+      console.error("画像URL一括生成エラー:", e);
     }
   }, [storagePath]);
 
