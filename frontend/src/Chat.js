@@ -17,21 +17,31 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   const [selectedFriends, setSelectedFriends] = useState([]);
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
   const [members, setMembers] = useState([]);
-  const [memberCount, setMemberCount] = useState(0); // 参加人数用
+  const [memberCount, setMemberCount] = useState(0); 
 
   // 【ステート定義】友達状態、ブロック状態、グループ判別フラグ
   const [isFriend, setIsFriend] = useState(true);
   const [isBlocked, setIsBlocked] = useState(false);
   const [isGroupRoom, setIsGroupRoom] = useState(false);
 
-  // const getRoomId = useCallback(() => {
-  //   if (propsRoomId) return propsRoomId;
-  //   if (!session?.user?.email || !friendEmail) return 'public';
-  // }, [propsRoomId, session, friendEmail]);
+  // 💡 追加：ヘッダー（左上）に表示する現在のルームアイコンURL
+  const [headerAvatarUrl, setHeaderAvatarUrl] = useState('');
 
-  // const roomId = getRoomId();
-  // const roomId = propsRoomId;
-  
+  // 💡 共通処理：アバターパスから署名付きURLを1件取得するヘルパー
+  const getSingleSignedUrl = async (path) => {
+    if (!path) return '';
+    try {
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .createSignedUrl(path, 300);
+      if (!error && data) return data.signedUrl;
+    } catch (e) {
+      console.error(e);
+    }
+    return '';
+  };
+
+  // 💡 修正：メンバー一覧とそれぞれの署名付きアバターURLを取得する
   const fetchMembers = useCallback(async (shouldOpenModal = false) => {
     if (!propsRoomId) return;
 
@@ -42,8 +52,30 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       if (error) throw error;
 
       if (data) {
-        setMembers(data);
-        setMemberCount(data.length);
+        // ✨ 各メンバーのアバターの署名付きURLを非同期で並列取得
+        const enrichedMembers = await Promise.all(data.map(async (m) => {
+          let signedUrl = '';
+          if (m.profiles?.avatar_url) {
+            signedUrl = await getSingleSignedUrl(m.profiles.avatar_url);
+          }
+          return {
+            ...m,
+            avatarSignedUrl: signedUrl
+          };
+        }));
+
+        setMembers(enrichedMembers);
+        setMemberCount(enrichedMembers.length);
+
+        // 💡 グループではない（1対1チャット）場合、相手のアバターをヘッダー画像に設定
+        const isGroup = isGroupRoom; 
+        if (!isGroup && session?.user?.id) {
+          const opponent = enrichedMembers.find(u => u.user_id !== session.user.id);
+          if (opponent?.avatarSignedUrl) {
+            setHeaderAvatarUrl(opponent.avatarSignedUrl);
+          }
+        }
+
         if (shouldOpenModal) {
           setIsMemberListOpen(true);
         }
@@ -51,7 +83,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     } catch (error) {
       console.error('メンバー取得エラー:', error.message);
     }
-  }, [propsRoomId]);
+  }, [propsRoomId, isGroupRoom, session?.user?.id]);
   
   useEffect(() => {
     const fetchChatInfo = async () => {
@@ -59,10 +91,16 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         if (friendEmail) {
           const { data: prof } = await supabase
             .from('profiles')
-            .select('display_name')
+            .select('display_name, avatar_url')
             .eq('email', friendEmail)
             .single();
-          if (prof) setFriendDisplayName(prof.display_name || friendEmail);
+          if (prof) {
+            setFriendDisplayName(prof.display_name || friendEmail);
+            if (prof.avatar_url) {
+              const url = await getSingleSignedUrl(prof.avatar_url);
+              setHeaderAvatarUrl(url);
+            }
+          }
         }
         return;
       }
@@ -81,21 +119,17 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       }
 
       const { data: roomData } = await supabase
-        // .from('rooms')
-        // .select('name, is_group')
-        // .eq('id', propsRoomId)
-        // .single();
-
         .from('room_members')
         .select('rooms ( name, is_group )')
         .eq('room_id', propsRoomId)
         .eq('user_id', session.user.id)
         .single();
 
-      if (roomData && roomData.rooms) { // 💡 roomsが存在するかチェック
-        setIsGroupRoom(roomData.rooms.is_group); // 💡 .rooms.is_group に修正
+      if (roomData && roomData.rooms) { 
+        const isGroup = roomData.rooms.is_group;
+        setIsGroupRoom(isGroup); 
 
-        if (roomData.rooms.is_group === false) {
+        if (isGroup === false) {
           const { data: members, error: rpcError } = await supabase
             .rpc('get_room_members', { p_room_id: propsRoomId });
 
@@ -121,11 +155,9 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
           setFriendDisplayName(foundName || friendEmail || "トーク相手");
 
-          // 【追加点】友達リストにおける登録・ブロック状態の取得
           if (friendEmail) {
             const { data: friendData } = await supabase
               .from('friends')
-              // .select('*')
               .select('is_blocked')
               .eq('user_id', session.user.id)
               .eq('friend_email', friendEmail)
@@ -158,7 +190,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       const { data: messages, error: msgError } = await supabase
         .from('messages')
         .select('*')
-        // .eq('room_id', roomId)
         .eq('room_id', propsRoomId)
         .order('created_at', { ascending: true });
 
@@ -167,12 +198,20 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       const userEmails = [...new Set(messages.map(m => m.user))];
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('email, display_name')
+        .select('email, display_name, avatar_url')
         .in('email', userEmails);
 
-      const enrichedMessages = messages.map(msg => ({
-        ...msg,
-        profiles: profiles?.find(p => p.email === msg.user)
+      // ✨ 各メッセージの送信者プロフィールに、アバターの署名付きURLを追加して合体させる
+      const enrichedMessages = await Promise.all(messages.map(async (msg) => {
+        const prof = profiles?.find(p => p.email === msg.user);
+        let signedUrl = '';
+        if (prof?.avatar_url) {
+          signedUrl = await getSingleSignedUrl(prof.avatar_url);
+        }
+        return {
+          ...msg,
+          profiles: prof ? { ...prof, avatarSignedUrl: signedUrl } : null
+        };
       }));
       setChatLog(enrichedMessages);
     };
@@ -180,39 +219,40 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     fetchMessages();
 
     const channel = supabase
-      // .channel(roomId)
       .channel(propsRoomId)
       .on('postgres_changes', { 
         event: 'INSERT', 
         schema: 'public', 
         table: 'messages', 
-        // filter: `room_id=eq.${roomId}` 
       }, async (payload) => {
-        // if (payload.new.room_id !== roomId) return;
         if (payload.new.room_id !== propsRoomId) return;
 
-        // 1. 新しく届いたメッセージの送信者(user)のニックネームを、profilesテーブルから1件だけ取得
+        // 新しいメッセージの送信者プロファイルを取得
         const { data: prof } = await supabase
           .from('profiles')
-          .select('email, display_name')
+          .select('email, display_name, avatar_url')
           .eq('email', payload.new.user)
           .maybeSingle();
 
-        // 2. 届いたメッセージのデータに、今取得した profiles 情報を合体させる
+        let signedUrl = '';
+        if (prof?.avatar_url) {
+          signedUrl = await getSingleSignedUrl(prof.avatar_url);
+        }
+
         const enrichedNewMessage = {
           ...payload.new,
-          profiles: prof || { email: payload.new.user, display_name: payload.new.user }
+          profiles: prof 
+            ? { ...prof, avatarSignedUrl: signedUrl } 
+            : { email: payload.new.user, display_name: payload.new.user, avatarSignedUrl: '' }
         };
 
-        // 3. 画面のチャットログ（配列）に追加する
         setChatLog((prev) => {
           const exists = prev.find((msg) => msg.id === payload.new.id);
           if (exists) return prev;
-          return [...prev, enrichedNewMessage]; // ニックネームが合体したデータを画面に流す
+          return [...prev, enrichedNewMessage];
         });
       }).subscribe();
     return () => supabase.removeChannel(channel);
-  // }, [session, roomId, friendEmail, propsRoomId]);
   }, [session, friendEmail, propsRoomId]);
 
   // 【追加点】友達追加処理
@@ -236,7 +276,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     }
   };
 
-  // 【追加点】ブロック処理（その場に留まり、表示を切り替える）
+  // 【追加点】ブロック処理
   const handleBlockFriendFromChat = async () => {
     if (!friendEmail) return;
     if (!window.confirm("このユーザーをブロックしますか？\nブロック中、相手からの新しいメッセージは表示されなくなります。")) return;
@@ -259,7 +299,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     }
   };
 
-  // 【追加点】ブロック解除処理（追加・ブロックボタンに戻す）
+  // 【追加点】ブロック解除処理
   const handleUnblockFriend = async () => {
     if (!friendEmail) return;
     try {
@@ -271,7 +311,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         );
 
       if (error) throw error;
-      setIsFriend(false); // 「追加」ボタンを再表示させるためfalseに
+      setIsFriend(false); 
       setIsBlocked(false);
       alert("ブロックを解除しました。");
     } catch (error) {
@@ -352,7 +392,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       .from('friends')
       .select('friend_email')
       .eq('user_id', session.user.id)
-      .eq('is_blocked', false); // ブロック中のユーザーは招待リストに出さない
+      .eq('is_blocked', false); 
 
     if (!friendRows || friendRows.length === 0) {
       alert("招待できる友達がいません。");
@@ -362,10 +402,22 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     const friendEmails = friendRows.map(f => f.friend_email);
     const { data: profiles } = await supabase
       .from('profiles')
-      .select('id, email, display_name')
+      .select('id, email, display_name, avatar_url')
       .in('email', friendEmails);
 
-    setFriendsList(profiles || []);
+    if (profiles) {
+      // ✨ 招待リスト用の友達アバターも署名付きURLを事前に発行して格納
+      const enrichedFriends = await Promise.all(profiles.map(async (f) => {
+        let signedUrl = '';
+        if (f.avatar_url) {
+          signedUrl = await getSingleSignedUrl(f.avatar_url);
+        }
+        return { ...f, avatarSignedUrl: signedUrl };
+      }));
+      setFriendsList(enrichedFriends);
+    } else {
+      setFriendsList([]);
+    }
     setIsInviteModalOpen(true);
   };
 
@@ -411,7 +463,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     const { error } = await supabase.from('messages').insert([{ 
       text: message, 
       user: session.user.email, 
-      // room_id: roomId
       room_id: propsRoomId
     }]);
     if (!error) setMessage('');
@@ -423,7 +474,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-    // const filePath = `${roomId}/${fileName}`;
     const filePath = `${propsRoomId}/${fileName}`;
 
     try {
@@ -433,24 +483,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
       if (uploadError) throw uploadError;
 
-      // const { data: { publicUrl } } = supabase.storage
-      //   .from('chat-attachments')
-      //   .getPublicUrl(filePath);
-
-      // const type = file.type.startsWith('image/') ? 'image' : 'document';
-
-      // const { error: insertError } = await supabase
-      //   .from('messages')
-      //   .insert([{
-      //     room_id: roomId,
-      //     user: session.user.email,
-      //     text: file.name, 
-      //     file_url: publicUrl,
-      //     file_type: type,
-      //     is_system: false
-      //   }]);
-
-      // 2. ✨ 3ヶ月（7776000秒）有効な署名付きURLを発行
       const { data: signedData, error: signError } = await supabase.storage
         .from('chat-attachments')
         .createSignedUrl(filePath, 7776000); 
@@ -460,15 +492,13 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
 
       const type = file.type.startsWith('image/') ? 'image' : 'document';
 
-      // 3. データベースに保存
       const { error: insertError } = await supabase
         .from('messages')
         .insert([{
-          // room_id: roomId,
           room_id: propsRoomId,
           user: session.user.email,
           text: file.name, 
-          file_url: secureUrl, // 💡 3ヶ月有効なURLが保存されます
+          file_url: secureUrl, 
           file_type: type,
           is_system: false
         }]);
@@ -488,18 +518,38 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     transition: '0.2s', fontWeight: isActive ? 'bold' : 'normal'
   });
 
+  // 💡 共通アイコン描画コンポーネント（Rooms.jsと同様）
+  const renderAvatar = (isGroup, signedUrl) => {
+    if (isGroup) {
+      return <div style={styles.groupAvatar}>G</div>;
+    }
+    return (
+      <img 
+        src={signedUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+        alt="Avatar" 
+        style={styles.avatarImage} 
+      />
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       <header style={styles.header}>
         <button onClick={onBack} style={styles.backBtn}>←</button>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* 💡 1箇所目修正：左上の対話相手またはグループ名の左側にアイコン追加 */}
           <div style={styles.titleContainer} onClick={() => fetchMembers(true)}>
-            <span>{friendDisplayName || friendEmail}</span>
-            {memberCount > 0 && <span style={styles.countText}>({memberCount})</span>}
+            {renderAvatar(isGroupRoom, headerAvatarUrl)}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {friendDisplayName || friendEmail}
+              </span>
+              {memberCount > 0 && <span style={styles.countText}>({memberCount})</span>}
+            </div>
           </div>
         </div>
         {propsRoomId && myStatus === 'joined' && (
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
             <button onClick={openInviteModal} style={styles.headerBtn}>＋招待</button>
             <button onClick={handleLeaveGroup} style={{...styles.headerBtn, color: theme.colors.error}}>脱退</button>
           </div>
@@ -513,9 +563,15 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
             <h3 style={styles.modalTitle}>メンバー一覧</h3>
             <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
               {members.map((m, i) => (
+                /* 💡 2箇所目修正：メンバー名の左側にアイコン画像を設ける */
                 <div key={i} style={styles.memberRow}>
-                  <span>{m.profiles?.display_name || m.profiles?.email}</span>
-                  <span style={{ fontSize: '0.7rem', color: m.status === 'joined' ? 'green' : 'orange' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                    {renderAvatar(false, m.avatarSignedUrl)}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.9rem' }}>
+                      {m.profiles?.display_name || m.profiles?.email}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: m.status === 'joined' ? 'green' : 'orange', flexShrink: 0, marginLeft: '5px' }}>
                     {m.status === 'joined' ? '参加中' : '招待中'}
                   </span>
                 </div>
@@ -533,6 +589,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
             <h3 style={styles.modalTitle}>友達を一括招待</h3>
             <div style={{ maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', textAlign: 'left' }}>
               {friendsList.map(friend => (
+                /* 💡 4箇所目修正：招待画面の友達の名前の左側にアイコン画像を設ける */
                 <label key={friend.id} style={styles.friendItem}>
                   <input id={`invite-check-${friend.id}`} name="invite-friend" type="checkbox" checked={selectedFriends.includes(friend.id)}
                     onChange={(e) => {
@@ -540,7 +597,12 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
                       else setSelectedFriends(selectedFriends.filter(id => id !== friend.id));
                     }}
                   />
-                  <span style={{ marginLeft: '10px', fontSize: '0.9rem' }}>{friend.display_name || friend.email}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: '10px', flex: 1, minWidth: 0 }}>
+                    {renderAvatar(false, friend.avatarSignedUrl)}
+                    <span style={{ fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {friend.display_name || friend.email}
+                    </span>
+                  </div>
                 </label>
               ))}
             </div>
@@ -552,7 +614,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         </div>
       )}
 
-      {/* 1. グループ用の招待バナー */}
+      {/* グループ用の招待バナー */}
       {myStatus === 'pending' && (
         <div style={styles.inviteBanner}>
           <p style={{ fontSize: '0.85rem', margin: '0 0 10px 0', color: '#856404' }}>グループに招待されています。</p>
@@ -563,9 +625,8 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         </div>
       )}
 
-      {/* 2. 【条件分岐修正】1対1チャット用の友達追加・ブロック・ブロック解除バナー */}
+      {/* 1対1チャット用の友達追加・ブロック・ブロック解除バナー */}
       {!isGroupRoom && (
-        // A. ブロックも登録もしていない初期状態 ➔ 追加・ブロックボタン
         (!isFriend && !isBlocked) ? (
           <div style={styles.friendActionBanner}>
             <p style={{ fontSize: '0.85rem', margin: '0 0 8px 0', color: '#333' }}>
@@ -577,7 +638,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
             </div>
           </div>
         ) : (
-          // B. ブロック中の状態 ➔ ブロック解除ボタンのみ
           isBlocked && (
             <div style={styles.blockedActionBanner}>
               <p style={{ fontSize: '0.85rem', margin: '0 0 8px 0', color: '#c92a2a' }}>
@@ -592,7 +652,7 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
       )}
 
       {/* サブタブ */}
-      <div style={{ display: 'flex', backgroundColor: '#fff', borderBottom: `1px solid ${theme.colors.border}` }}>
+      <div style={{ display: 'flex', backgroundColor: '#fff', borderBottom: `1px solid ${theme.colors.border}`, flexShrink: 0 }}>
         <button onClick={() => setSubTab('chat')} style={subTabButtonStyle(subTab === 'chat')}>トーク</button>
         {myStatus === 'joined' && (
           <>
@@ -609,7 +669,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={styles.chatArea}>
               {chatLog
-                // ★【追加点】自分がブロック中の場合、その相手(friendEmail)から届いたメッセージを画面から排除（フィルター）する
                 .filter(msg => !(isBlocked && msg.user === friendEmail))
                 .map((msg, i) => {
                   if (msg.is_system) {
@@ -622,26 +681,39 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
                   const isMe = msg.user === session.user.email;
                   return (
                     <div key={msg.id || i} style={{ textAlign: isMe ? 'right' : 'left', marginBottom: '15px' }}>
-                      {!isMe && <div style={styles.senderName}>{msg.profiles?.display_name || msg.user}</div>}
+                      {/* 💡 3箇所目修正：相手メッセージの場合、送信者名の左隣にアバターを追加してフレックス横並び化 */}
+                      {!isMe && (
+                        <div style={styles.senderHeaderContainer}>
+                          {renderAvatar(false, msg.profiles?.avatarSignedUrl)}
+                          <div style={styles.senderName}>{msg.profiles?.display_name || msg.user}</div>
+                        </div>
+                      )}
+                      
+                      {/* メッセージの気泡コンテナ（アイコンの右側に揃えるため、相手メッセージの時はmarginでインデントを持たせる） */}
                       <div style={{ 
-                        ...styles.bubble, 
-                        backgroundColor: isMe ? theme.colors.primary : '#fff', 
-                        color: isMe ? 'white' : 'black',
-                        boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
+                        display: 'block',
+                        marginLeft: isMe ? '0' : '42px' 
                       }}>
-                        {msg.file_url ? (
-                          msg.file_type === 'image' ? (
-                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
-                              <img src={msg.file_url} alt="uploaded" style={styles.attachedImg} />
-                            </a>
+                        <div style={{ 
+                          ...styles.bubble, 
+                          backgroundColor: isMe ? theme.colors.primary : '#fff', 
+                          color: isMe ? 'white' : 'black',
+                          boxShadow: isMe ? 'none' : '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {msg.file_url ? (
+                            msg.file_type === 'image' ? (
+                              <a href={msg.file_url} target="_blank" rel="noopener noreferrer">
+                                <img src={msg.file_url} alt="uploaded" style={styles.attachedImg} />
+                              </a>
+                            ) : (
+                              <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : theme.colors.primary, textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                <span>📄</span><span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
+                              </a>
+                            )
                           ) : (
-                            <a href={msg.file_url} target="_blank" rel="noopener noreferrer" style={{ color: isMe ? 'white' : theme.colors.primary, textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                              <span>📄</span><span style={{ fontSize: '0.9rem' }}>{msg.text}</span>
-                            </a>
-                          )
-                        ) : (
-                          <span>{msg.text}</span>
-                        )}
+                            <span>{msg.text}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -666,9 +738,6 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
         )}
         {myStatus === 'joined' && (
           <>
-            {/* {subTab === 'calendar' && <Calendar session={session} roomId={roomId} />}
-            {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} roomId={roomId} />}
-            {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} roomId={roomId} />} */}
             {subTab === 'calendar' && <Calendar session={session} roomId={propsRoomId} />}
             {subTab === 'album' && <SharedFolder session={session} friendEmail={friendEmail} roomId={propsRoomId} />}
             {subTab === 'files' && <SharedDocuments session={session} friendEmail={friendEmail} roomId={propsRoomId} />}
@@ -679,17 +748,18 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
   );
 };
 
-// --- 6. スタイル定義 ---
+// --- スタイル定義 ---
 const styles = {
-  header: { display: 'flex', alignItems: 'center', padding: '10px 15px', borderBottom: `1px solid ${theme.colors.border}`, backgroundColor: '#fff' },
-  backBtn: { background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', marginRight: '10px' },
-  titleContainer: { fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' },
+  header: { display: 'flex', alignItems: 'center', padding: '10px 15px', borderBottom: `1px solid ${theme.colors.border}`, backgroundColor: '#fff', gap: '10px' },
+  backBtn: { background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', flexShrink: 0 },
+  titleContainer: { fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 },
   countText: { fontSize: '0.85rem', color: theme.colors.textSub, fontWeight: 'normal' },
   headerBtn: { padding: '5px 10px', fontSize: '0.75rem', backgroundColor: '#f8f9fa', border: `1px solid ${theme.colors.border}`, borderRadius: '5px', cursor: 'pointer' },
   modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '85%', maxWidth: '300px', textAlign: 'center' },
   modalTitle: { fontSize: '1rem', marginBottom: '15px' },
-  memberRow: { padding: '8px 0', borderBottom: `1px solid ${theme.colors.border}`, display: 'flex', justifyContent: 'space-between' },
+  // 💡 修正：メンバー一覧をアイコン付きできれいに見せるためフレックスへ
+  memberRow: { padding: '8px 0', borderBottom: `1px solid ${theme.colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   modalCloseBtn: { ...commonStyles.button, marginTop: '15px', width: '100%', backgroundColor: '#6c757d' },
   friendItem: { display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}`, cursor: 'pointer' },
   cancelBtn: { backgroundColor: '#6c757d', color: '#fff', border: 'none', padding: '10px', borderRadius: '5px', cursor: 'pointer' },
@@ -697,26 +767,32 @@ const styles = {
   joinBtn: { backgroundColor: '#28a745', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
   rejectBtn: { backgroundColor: theme.colors.error, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
   
-  // 友達追加用のバナースタイル
   friendActionBanner: { backgroundColor: '#e8f4fd', padding: '12px', textAlign: 'center', borderBottom: '1px solid #bce0fd' },
   addFriendBtn: { backgroundColor: theme.colors.primary, color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
   blockFriendBtn: { backgroundColor: '#6c757d', color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
   
-  // 【追加点】ブロック中バナー & ブロック解除ボタンのスタイル
   blockedActionBanner: { backgroundColor: '#fff5f5', padding: '12px', textAlign: 'center', borderBottom: '1px solid #ffe3e3' },
   unblockFriendBtn: { backgroundColor: theme.colors.success, color: '#fff', border: 'none', padding: '6px 18px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' },
   
   chatArea: { flex: 1, overflowY: 'auto', backgroundColor: '#f0f2f5', padding: '15px' },
   systemMsgContainer: { textAlign: 'center', margin: '15px 0' },
   systemMsgBadge: { backgroundColor: '#d1d5db', color: '#4b5563', padding: '3px 12px', borderRadius: '12px', fontSize: '0.7rem' },
-  senderName: { fontSize: '0.65rem', color: '#888', marginLeft: '5px', marginBottom: '2px' },
+  
+  // 💡 追加：相手のメッセージ送信者エリアのラップ
+  senderHeaderContainer: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' },
+  senderName: { fontSize: '0.75rem', color: '#666', fontWeight: 'bold' },
+  
+  // 💡 共通アイコンスタイル設定（コンパクトめな30pxに変更してトーク画面等に適合）
+  avatarImage: { width: '30px', height: '30px', borderRadius: '50%', objectFit: 'cover', border: `1px solid ${theme.colors.border}`, flexShrink: 0 },
+  groupAvatar: { width: '30px', height: '30px', borderRadius: '50%', backgroundColor: '#e9ecef', color: '#495057', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 'bold', border: `1px solid ${theme.colors.border}`, flexShrink: 0 },
+  
   bubble: { display: 'inline-block', padding: '8px 14px', borderRadius: '18px', maxWidth: '80%', textAlign: 'left' },
   attachedImg: { maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', cursor: 'pointer', display: 'block' },
-  inputArea: { padding: '10px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}`, display: 'flex', gap: '10px', alignItems: 'center' },
+  inputArea: { padding: '10px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}`, display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 },
   clipBtn: { cursor: 'pointer', padding: '0 5px', fontSize: '1.4rem' },
   chatInput: { flex: 1, padding: '10px', borderRadius: '20px', border: `1px solid ${theme.colors.border}`, outline: 'none' },
   sendBtn: { backgroundColor: theme.colors.primary, color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' },
-  lockedInputArea: { padding: '15px', textAlign: 'center', color: theme.colors.textSub, fontSize: '0.8rem', backgroundColor: '#eee' }
+  lockedInputArea: { padding: '15px', textAlign: 'center', color: theme.colors.textSub, fontSize: '0.8rem', backgroundColor: '#eee', flexShrink: 0 }
 };
 
 export default Chat;

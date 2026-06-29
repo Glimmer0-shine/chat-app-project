@@ -24,7 +24,8 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
         is_blocked,
         is_hidden,
         profiles!friend_email (
-          display_name
+          display_name,
+          avatar_url
         )
       `)
       .eq('user_id', session.user.id)
@@ -32,9 +33,36 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
       .eq('is_hidden', false)
       .order('created_at', { ascending: false });
 
-    if (!error) {
-      setFriendsList(data || []);
-    } else {
+    // if (!error) {
+    //   setFriendsList(data || []);
+    // } else {
+    //   console.error("友達リスト取得エラー:", error.message);
+    // }
+    if (!error && data) {
+      // 💡 署名付きURLを一括生成する処理を追加
+      const enrichedFriends = await Promise.all(data.map(async (friend) => {
+        let signedUrl = '';
+        const path = friend.profiles?.avatar_url;
+
+        if (path) {
+          const { data: signedData, error: signError } = await supabase.storage
+            .from('avatars')
+            .createSignedUrl(path, 300); // 5分間有効
+          
+          if (!signError && signedData) {
+            signedUrl = signedData.signedUrl;
+          }
+        }
+
+        // 既存のデータに avatar_signed_url を合体させて返す
+        return {
+          ...friend,
+          avatar_signed_url: signedUrl
+        };
+      }));
+
+      setFriendsList(enrichedFriends);
+    } else if (error) {
       console.error("友達リスト取得エラー:", error.message);
     }
   }, [session]);
@@ -76,6 +104,7 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     }
 
     // もし過去に非表示やブロックにしていた場合はupsertで解除して再登録
+    // 同じユーザーが同じメールアドレスを重複して友達登録できないように
     const { error } = await supabase
       .from('friends')
       .upsert([
@@ -299,6 +328,11 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
             onMouseUp={handleTouchEnd}
             onMouseLeave={handleTouchEnd}
           >
+            <img 
+              src={f.avatar_signed_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+              alt="Avatar" 
+              style={styles.avatarImage} 
+            />
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, cursor: 'pointer' }}>
               <span style={{ fontWeight: 'bold', fontSize: '1rem', color: theme.colors.textMain }}>
                 {f.profiles?.display_name || '名前未設定'}
@@ -367,6 +401,15 @@ const styles = {
     userSelect: 'none',
     WebkitUserSelect: 'none',
     borderRadius: '4px'
+  },
+  avatarImage: {
+    width: '42px',
+    height: '42px',
+    borderRadius: '50%',
+    objectFit: 'cover',
+    marginRight: '12px',
+    border: `1px solid ${theme.colors.border}`,
+    flexShrink: 0 // 横幅が潰れないようにガード
   },
   modalOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
