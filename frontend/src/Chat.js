@@ -387,38 +387,94 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
     }
   };
 
+  // const openInviteModal = async () => {
+  //   const { data: friendRows } = await supabase
+  //     .from('friends')
+  //     .select('friend_email')
+  //     .eq('user_id', session.user.id)
+  //     .eq('is_blocked', false); 
+
+  //   if (!friendRows || friendRows.length === 0) {
+  //     alert("招待できる友達がいません。");
+  //     return;
+  //   }
+
+  //   const friendEmails = friendRows.map(f => f.friend_email);
+  //   const { data: profiles } = await supabase
+  //     .from('profiles')
+  //     .select('id, email, display_name, avatar_url')
+  //     .in('email', friendEmails);
+
+  //   if (profiles) {
+  //     // ✨ 招待リスト用の友達アバターも署名付きURLを事前に発行して格納
+  //     const enrichedFriends = await Promise.all(profiles.map(async (f) => {
+  //       let signedUrl = '';
+  //       if (f.avatar_url) {
+  //         signedUrl = await getSingleSignedUrl(f.avatar_url);
+  //       }
+  //       return { ...f, avatarSignedUrl: signedUrl };
+  //     }));
+  //     setFriendsList(enrichedFriends);
+  //   } else {
+  //     setFriendsList([]);
+  //   }
+  //   setIsInviteModalOpen(true);
+  // };
   const openInviteModal = async () => {
-    const { data: friendRows } = await supabase
-      .from('friends')
-      .select('friend_email')
-      .eq('user_id', session.user.id)
-      .eq('is_blocked', false); 
+    try {
+      // 1. まず連絡帳からブロックしていない友達を取得
+      const { data: friendRows } = await supabase
+        .from('friends')
+        .select('friend_email')
+        .eq('user_id', session.user.id)
+        .eq('is_blocked', false); 
 
-    if (!friendRows || friendRows.length === 0) {
-      alert("招待できる友達がいません。");
-      return;
-    }
+      if (!friendRows || friendRows.length === 0) {
+        alert("招待できる友達がいません。");
+        return;
+      }
 
-    const friendEmails = friendRows.map(f => f.friend_email);
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, email, display_name, avatar_url')
-      .in('email', friendEmails);
+      // 2. 💡【大修正】すでに `fetchMembers()` によって取得済みの `members` ステートを利用する
+      // 文字列として安全に比較できるように小文字・トリム化して配列にまとめる
+      const existingUserIds = members.map(m => String(m.user_id).trim().toLowerCase());
 
-    if (profiles) {
-      // ✨ 招待リスト用の友達アバターも署名付きURLを事前に発行して格納
-      const enrichedFriends = await Promise.all(profiles.map(async (f) => {
-        let signedUrl = '';
-        if (f.avatar_url) {
-          signedUrl = await getSingleSignedUrl(f.avatar_url);
+      // 3. 友達のプロフィール情報を取得
+      const friendEmails = friendRows.map(f => f.friend_email);
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, email, display_name, avatar_url')
+        .in('email', friendEmails);
+
+      if (profiles) {
+        // 4. すでにルームに存在する（参加中 or 招待中問わず）ユーザーを確実に除外
+        const filterNotRoomMembers = profiles.filter(f => {
+          const friendIdStr = String(f.id).trim().toLowerCase();
+          return !existingUserIds.includes(friendIdStr);
+        });
+
+        if (filterNotRoomMembers.length === 0) {
+          alert("すべての友達がすでにこのルームに参加、または招待中です。");
+          return;
         }
-        return { ...f, avatarSignedUrl: signedUrl };
-      }));
-      setFriendsList(enrichedFriends);
-    } else {
-      setFriendsList([]);
+
+        // 5. 残ったメンバーの署名付きURLを取得
+        const enrichedFriends = await Promise.all(filterNotRoomMembers.map(async (f) => {
+          let signedUrl = '';
+          if (f.avatar_url) {
+            signedUrl = await getSingleSignedUrl(f.avatar_url);
+          }
+          return { ...f, avatarSignedUrl: signedUrl };
+        }));
+
+        setFriendsList(enrichedFriends);
+        setIsInviteModalOpen(true);
+      } else {
+        setFriendsList([]);
+      }
+    } catch (error) {
+      console.error("招待リスト生成エラー:", error.message);
+      alert("招待リストの取得に失敗しました。");
     }
-    setIsInviteModalOpen(true);
   };
 
   const executeInvite = async () => {
