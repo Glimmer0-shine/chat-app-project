@@ -12,6 +12,30 @@ const Rooms = ({ session, onSelectRoom }) => {
   const [hiddenRooms, setHiddenRooms] = useState([]);
   let pressTimer;
 
+  // 💡 共通関数：ルームIDから相手のプロフィール（名前・メール・画像パス）を特定する
+  const getOpponentInfo = useCallback(async (roomId) => {
+    try {
+      const { data: members, error: rpcError } = await supabase
+        .rpc('get_room_members', { p_room_id: roomId });
+
+      if (!rpcError && members) {
+        // 自分以外のメンバー（相手）を見つける
+        const opponent = members.find(u => u.user_id !== session?.user?.id);
+        if (opponent && opponent.profiles) {
+          return {
+            displayName: opponent.profiles.display_name || opponent.profiles.email,
+            opponentEmail: opponent.profiles.email,
+            avatarPath: opponent.profiles.avatar_url
+          };
+        }
+      }
+      return { displayName: '相手不在', opponentEmail: null, avatarPath: null };
+    } catch (err) {
+      console.error("相手情報取得失敗:", err);
+      return { displayName: 'エラー', opponentEmail: null, avatarPath: null };
+    }
+  }, [session?.user?.id]);
+
   // --- 1. ルーム一覧の取得 (非表示・削除ガード付き) ---
   const fetchAllRooms = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -39,19 +63,37 @@ const Rooms = ({ session, onSelectRoom }) => {
         const isGroup = m.rooms?.is_group ?? true; 
         let displayName = m.rooms?.name || '不明なルーム';
         let opponentEmail = null;
+        let avatarPath = null;
+        let signedUrl = '';
 
+        // if (!isGroup) {
+        //   const { data: members, error: rpcError } = await supabase
+        //     .rpc('get_room_members', { p_room_id: roomId });
+
+        //   if (!rpcError && members) {
+        //     const opponent = members.find(u => u.user_id !== session.user.id);
+        //     if (opponent && opponent.profiles) {
+        //       displayName = opponent.profiles.display_name || opponent.profiles.email;
+        //       opponentEmail = opponent.profiles.email;
+        //     } else {
+        //       displayName = "相手不在";
+        //     }
+        //   }
+        // }
         if (!isGroup) {
-          const { data: members, error: rpcError } = await supabase
-            .rpc('get_room_members', { p_room_id: roomId });
+          const opponentInfo = await getOpponentInfo(roomId);
+          displayName = opponentInfo.displayName;
+          opponentEmail = opponentInfo.opponentEmail;
+          avatarPath = opponentInfo.avatarPath;
+        }
 
-          if (!rpcError && members) {
-            const opponent = members.find(u => u.user_id !== session.user.id);
-            if (opponent && opponent.profiles) {
-              displayName = opponent.profiles.display_name || opponent.profiles.email;
-              opponentEmail = opponent.profiles.email;
-            } else {
-              displayName = "相手不在";
-            }
+        // 💡 1対1チャットでアバターパスがある場合は署名付きURLを取得
+        if (avatarPath) {
+          const { data: signedData, error: signError } = await supabase.storage
+            .from('avatars')
+            .createSignedUrl(avatarPath, 300);
+          if (!signError && signedData) {
+            signedUrl = signedData.signedUrl;
           }
         }
 
@@ -69,6 +111,7 @@ const Rooms = ({ session, onSelectRoom }) => {
           opponentEmail: opponentEmail,
           isGroup: isGroup,
           status: m.status,
+          avatarSignedUrl: signedUrl,
           lastMessage: lastMsg?.text || (m.status === 'pending' ? '招待が届いています' : 'メッセージはありません'),
           time: lastMsg ? new Date(lastMsg.created_at).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : ''
         };
@@ -80,7 +123,7 @@ const Rooms = ({ session, onSelectRoom }) => {
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [session, getOpponentInfo]);
 
   // useEffect(() => {
   //   if (session?.user?.id) {
@@ -221,27 +264,47 @@ const Rooms = ({ session, onSelectRoom }) => {
         const roomId = hr.room_id;
         const isGroup = hr.rooms?.is_group ?? true;
         let displayName = hr.rooms?.name || '不明なルーム';
+        let avatarPath = null;
+        let signedUrl = '';
 
         // 💡 グループでない（個人チャット）なら、通常一覧と同じロジックで相手の最新名を取得
-        if (!isGroup) {
-          const { data: members, error: rpcError } = await supabase
-            .rpc('get_room_members', { p_room_id: roomId });
+        // if (!isGroup) {
+        //   const { data: members, error: rpcError } = await supabase
+        //     .rpc('get_room_members', { p_room_id: roomId });
 
-          if (!rpcError && members) {
-            const opponent = members.find(u => u.user_id !== session.user.id);
-            if (opponent && opponent.profiles) {
-              // ニックネームがあればそれ、無ければメールアドレスを表示
-              displayName = opponent.profiles.display_name || opponent.profiles.email;
-            } else {
-              displayName = "相手不在";
-            }
+        //   if (!rpcError && members) {
+        //     const opponent = members.find(u => u.user_id !== session.user.id);
+        //     if (opponent && opponent.profiles) {
+        //       // ニックネームがあればそれ、無ければメールアドレスを表示
+        //       displayName = opponent.profiles.display_name || opponent.profiles.email;
+        //       avatarPath = opponent.profiles.avatar_url;
+        //     } else {
+        //       displayName = "相手不在";
+        //     }
+        //   }
+        // }
+        if (!isGroup) {
+          const opponentInfo = await getOpponentInfo(roomId);
+          displayName = opponentInfo.displayName;
+          avatarPath = opponentInfo.avatarPath;
+        }
+
+        // 💡 非表示リスト用の署名付きURL発行
+        if (avatarPath) {
+          const { data: signedData, error: signError } = await supabase.storage
+            .from('avatars')
+            .createSignedUrl(avatarPath, 300);
+          if (!signError && signedData) {
+            signedUrl = signedData.signedUrl;
           }
         }
 
         // モーダル表示用にデータを整形して返す
         return {
           room_id: roomId,
-          displayName: displayName // ✨ 動的に作った名前を格納
+          displayName: displayName, // ✨ 動的に作った名前を格納
+          isGroup: isGroup,
+          avatarSignedUrl: signedUrl // 💡 格納
         };
       }));
 
@@ -284,6 +347,22 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
   };
 
+  // 💡 共通のアイコン描画ヘルパー関数（コードをスッキリさせるため）
+  const renderAvatar = (isGroup, signedUrl) => {
+    if (isGroup) {
+      return (
+        <div style={styles.groupAvatar}>G</div>
+      );
+    }
+    return (
+      <img 
+        src={signedUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+        alt="Avatar" 
+        style={styles.avatarImage} 
+      />
+    );
+  };
+
   if (loading) return <p style={{ textAlign: 'center', padding: '20px', color: theme.colors.textSub }}>読み込み中...</p>;
 
   return (
@@ -307,18 +386,27 @@ const Rooms = ({ session, onSelectRoom }) => {
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             style={styles.roomItem}
-          >        
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ fontWeight: 'bold', color: theme.colors.textMain }}>
-                {room.isGroup ? `${room.name}` : room.name}
-              </span>
-              <span style={{ fontSize: '0.7rem', color: theme.colors.textSub }}>{room.time}</span>
-            </div>
-            <div style={{ 
-              ...styles.lastMsg, 
-              color: isPending ? theme.colors.primary : theme.colors.textSub 
-            }}>
-              {room.lastMessage}
+          >
+            {/* 💡 横並びにするためのコンテナラッパーを追加 */}
+            <div style={styles.roomFlexContainer}>
+              {/* 💡 アイコンの描画（左側） */}
+              {renderAvatar(room.isGroup, room.avatarSignedUrl)}
+
+              {/* 💡 テキストコンテンツエリア（右側） */}
+              <div style={styles.roomContentArea}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ fontWeight: 'bold', color: theme.colors.textMain }}>
+                    {room.isGroup ? `${room.name}` : room.name}
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: theme.colors.textSub }}>{room.time}</span>
+                </div>
+                <div style={{ 
+                  ...styles.lastMsg, 
+                  color: isPending ? theme.colors.primary : theme.colors.textSub 
+                }}>
+                  {room.lastMessage}
+                </div>
+              </div>
             </div>
           </div>
         );
@@ -355,11 +443,13 @@ const Rooms = ({ session, onSelectRoom }) => {
             ) : (
               hiddenRooms.map((hr) => (
                 <div key={hr.room_id} style={styles.hiddenRoomItem}>
-                  {/* <span style={{ fontSize: '0.9rem' }}>{hr.rooms?.name === '1on1' ? '1対1トーク' : hr.rooms?.name}</span> */}
-                  <span style={{ fontSize: '0.9rem' }}>{hr.displayName}</span>
+                  {/* 💡 修正：非表示リストの並びも綺麗にアバター連携させました */}
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, marginRight: '10px' }}>
+                    {renderAvatar(hr.isGroup, hr.avatarSignedUrl)}
+                    <span style={{ fontSize: '0.9rem', color: theme.colors.textMain }}>{hr.displayName}</span>
+                  </div>
                   <div style={{ display: 'flex', gap: '5px' }}>
                     <button onClick={() => unhideRoom(hr.room_id)} style={styles.unhideBtn}>再表示</button>
-                    {/* 💡 削除ボタンを追加 */}
                     <button onClick={() => deleteRoomFromHidden(hr.room_id)} style={styles.deleteBtn}>削除</button>
                   </div>
                 </div>
@@ -396,10 +486,19 @@ const styles = {
   createBtn: { padding: '5px 15px', fontSize: '0.8rem', backgroundColor: theme.colors.primary, color: '#fff', border: 'none', borderRadius: '20px', cursor: 'pointer' },
   secondaryBtn: { padding: '5px 15px', fontSize: '0.8rem', backgroundColor: '#f0f0f0', color: '#666', border: `1px solid ${theme.colors.border}`, borderRadius: '20px', cursor: 'pointer' },
   roomItem: { padding: '15px', borderBottom: `1px solid ${theme.colors.border}`, cursor: 'pointer', backgroundColor: '#fff', position: 'relative', userSelect: 'none' },
+  // 💡 追加：横並び用フレックスボックス
+  roomFlexContainer: { display: 'flex', alignItems: 'center' },
+  // 💡 追加：テキストコンテンツ領域
+  roomContentArea: { flex: 1, minWidth: 0 }, // minWidth: 0 はテキスト省略（...）を正常に効かせるため
+  
+  // 💡 追加：個人アバター画像スタイル
+  avatarImage: { width: '42px', height: '42px', borderRadius: '50%', objectFit: 'cover', marginRight: '12px', border: `1px solid ${theme.colors.border}`, flexShrink: 0 },
+  // 💡 追加：グループデフォルトアイコンスタイル
+  groupAvatar: { width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#e9ecef', color: '#495057', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', fontWeight: 'bold', marginRight: '12px', border: `1px solid ${theme.colors.border}`, flexShrink: 0 },
   lastMsg: { fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   modalContent: { backgroundColor: '#fff', padding: '20px', borderRadius: '10px', width: '85%', maxWidth: '400px' },
-  hiddenRoomItem: { display: 'flex', justifycontent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}` },
+  hiddenRoomItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${theme.colors.border}` },
   unhideBtn: { backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 10px', fontSize: '0.75rem', cursor: 'pointer' },
   deleteBtn: { backgroundColor: '#fff5f5', color: theme.colors.error, border: `1px solid #ffa8a8`, borderRadius: '4px', padding: '5px 10px', fontSize: '0.75rem', cursor: 'pointer' },
   invisibleOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1000 },
