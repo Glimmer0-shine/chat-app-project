@@ -283,6 +283,8 @@ const Profile = ({ session, onBack }) => {
       localStorage.setItem('auth_last_verified', Date.now().toString());
 
       alert('プロフィール情報を更新しました！');
+      // 保存が成功したら、親コンポーネントから受け取った「戻る処理」を実行する
+      if (onBack) onBack();
     } catch (error) {
       alert('更新に失敗しました: ' + error.message);
     } finally {

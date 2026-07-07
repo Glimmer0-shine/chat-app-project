@@ -213,6 +213,38 @@ function App() {
     localStorage.setItem('showProfile', showProfile);
   }, [activeTab, currentChatFriend, currentChatRoomId, showProfile]);
 
+  // --- 4.5. 新規ユーザー・ニックネーム未設定ユーザーの自動リダイレクト ---
+  useEffect(() => {
+    // セッションがない（ログインしていない）なら何もしない
+    if (!session?.user?.id) return;
+
+    const checkNickname = async () => {
+      try {
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('display_name')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error("[App.js] ニックネームチェックエラー:", error.message);
+          return;
+        }
+
+        // プロフィールの行自体がない、または表示名（ニックネーム）が空の場合
+        if (!profile || !profile.display_name) {
+          console.log("[App.js] ⚠️ ニックネーム未設定を検知。プロフィール画面へ誘導します。");
+          alert("ニックネームが未設定です。ニックネームを設定してみましょう！");
+          setShowProfile(true);
+        }
+      } catch (e) {
+        console.error("[App.js] ニックネームチェック例外:", e);
+      }
+    };
+
+    checkNickname();
+  }, [session?.user?.id]);
+
   // --- 5. ハンドラー ---
   const handleStartChat = (friendEmail, roomId = null) => {
     setCurrentChatFriend(friendEmail);
