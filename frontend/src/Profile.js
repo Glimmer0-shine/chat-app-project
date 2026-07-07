@@ -11,6 +11,9 @@ const Profile = ({ session, onBack }) => {
   const [displayName, setDisplayName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   
+  // 💡 【新設】メールアドレス検索の許可フラグ（初期値はtrue）
+  const [allowEmailSearch, setAllowEmailSearch] = useState(true);
+  
   // 認証維持期間（0: 毎回, 30: 1ヶ月, 180: 半年）
   const [sessionLimit, setSessionLimit] = useState(() => {
     return localStorage.getItem('auth_session_limit') || '0';
@@ -52,36 +55,27 @@ const Profile = ({ session, onBack }) => {
           .eq('id', session.user.id)
           .maybeSingle(); 
 
-        // if (isMounted && !error && data) {
-        //   setProfile(data);
-        //   setDisplayName(data.display_name || '');
-        //   setAvatarUrl(data.avatar_url || '');
-        // }
-
         if (isMounted && !error && data) {
-          // ① まず、取得したオブジェクト（全カラム情報）をそのままセット
           setProfile(data);
           setDisplayName(data.display_name || '');
+          
+          // 💡 【修正】DBから取得した検索許可設定をステートに反映（nullの場合はデフォルトのtrueにする）
+          setAllowEmailSearch(data.allow_email_search !== false);
 
-          // ② データベースに保存されている「パス（住所）」があるか確認
           if (data.avatar_url) {
-            // パスを元に、5分間有効な署名付きURLを取得する
             const { data: signedData, error: signError } = await supabase.storage
               .from('avatars')
               .createSignedUrl(data.avatar_url, 300); // 5分間有効
 
             if (!signError && signedData && isMounted) {
-              // 💡 画面表示用のstate（avatarUrl）にだけ、署名付きURLをセットする(profiles.avatar_urlの更新の必要が無い)
               setAvatarUrl(signedData.signedUrl);
             } else if (isMounted) {
-              setAvatarUrl(''); // URL作成に失敗した場合は空にする
+              setAvatarUrl('');
             }
           } else {
-            setAvatarUrl(''); // そもそも画像が未登録なら空にする
+            setAvatarUrl('');
           }
         }
-
-
       } catch (e) {
         console.error("プロフィール取得例外:", e);
       } finally {
@@ -98,7 +92,6 @@ const Profile = ({ session, onBack }) => {
     if (!session?.user?.id) return;
 
     try {
-      // 非表示ユーザーの取得
       const { data: hiddenData, error: hError } = await supabase
         .from('friends')
         .select('id, friend_email, profiles!friend_email(display_name)')
@@ -106,7 +99,6 @@ const Profile = ({ session, onBack }) => {
         .eq('is_hidden', true);
       if (!hError) setHiddenFriends(hiddenData || []);
 
-      // ブロックユーザーの取得
       const { data: blockedData, error: bError } = await supabase
         .from('friends')
         .select('id, friend_email, profiles!friend_email(display_name)')
@@ -124,9 +116,8 @@ const Profile = ({ session, onBack }) => {
     }
   }, [showFriendManagement, fetchManagementLists, session?.user?.id]);
 
-  // --- 3. 各アコーディオンの切り替え制御（お掃除機能付き） ---
+  // --- 3. 各アコーディオンの切り替え制御 ---
   const toggleAccordion = (type) => {
-    // フォームを閉じる、または切り替えるタイミングで入力をリセットして誤送信を防ぐ
     setNewEmail('');
     setConfirmEmail('');
     setCurrentPassword('');
@@ -165,33 +156,18 @@ const Profile = ({ session, onBack }) => {
 
       if (uploadError) throw uploadError;
 
-      // const { data: { publicUrl } } = supabase.storage
-      //   .from('avatars')
-      //   .getPublicUrl(filePath);
-
-      // await supabase
-      //   .from('profiles')
-      //   .update({ avatar_url: publicUrl })
-      //   .eq('id', session.user.id);
-
-      // setAvatarUrl(publicUrl);
-
-      // ② データベースには「公開URL」ではなく「filePath（パス）」を保存する
       await supabase
         .from('profiles')
-        .update({ avatar_url: filePath }) // 💡 ここを filePath に変更
+        .update({ avatar_url: filePath })
         .eq('id', session.user.id);
 
-      // ③ 【新設】画面を更新するために、その場で5分間有効な署名付きURLを即座に発行する
       const { data: signedData, error: signError } = await supabase.storage
         .from('avatars')
-        .createSignedUrl(filePath, 300); // 5分間有効
+        .createSignedUrl(filePath, 300);
 
       if (signError) throw signError;
 
-      // ④ 発行された署名付きURLを state にセットして画面を即時書き換える
       setAvatarUrl(signedData.signedUrl);
-
       alert('プロフィール画像を更新しました！');
     } catch (error) {
       alert('画像アップロード失敗: ' + error.message);
@@ -293,9 +269,13 @@ const Profile = ({ session, onBack }) => {
   const handleGeneralUpdate = async () => {
     try {
       setUpdating(true);
+      // 💡 【修正】更新データに allow_email_search を追加
       const { error: profileError } = await supabase
         .from('profiles')
-        .update({ display_name: displayName })
+        .update({ 
+          display_name: displayName,
+          allow_email_search: allowEmailSearch
+        })
         .eq('id', session.user.id);
       if (profileError) throw profileError;
 
@@ -317,7 +297,7 @@ const Profile = ({ session, onBack }) => {
       .from('friends')
       .update(updates)
       .eq('id', id)
-      .eq('user_id', session.user.id); // 安全のために自分のレコードに限定
+      .eq('user_id', session.user.id);
 
     if (!error) {
       alert(successMessage);
@@ -335,7 +315,7 @@ const Profile = ({ session, onBack }) => {
       .from('friends')
       .delete()
       .eq('id', id)
-      .eq('user_id', session.user.id); // 安全制限
+      .eq('user_id', session.user.id);
 
     if (!error) {
       alert("削除しました。");
@@ -366,7 +346,6 @@ const Profile = ({ session, onBack }) => {
 
       if (profileError) throw profileError;
 
-      // セッションに関わるキャッシュもクリア
       localStorage.removeItem('auth_last_verified');
       sessionStorage.removeItem('session_active');
 
@@ -427,6 +406,22 @@ const Profile = ({ session, onBack }) => {
             onChange={(e) => setDisplayName(e.target.value)}
             style={commonStyles.input}
           />
+        </div>
+
+        {/* 💡 【新設】プライバシー設定（メールアドレス検索のオン/オフ） */}
+        <div style={styles.infoGroup}>
+          <label htmlFor="allow-email-search-checkbox" style={styles.label}>プライバシー設定</label>
+          <label htmlFor="allow-email-search-checkbox" style={styles.checkboxContainer}>
+            <input 
+              id="allow-email-search-checkbox"
+              name="allow-email-search"
+              type="checkbox"
+              checked={allowEmailSearch}
+              onChange={(e) => setAllowEmailSearch(e.target.checked)}
+              style={styles.checkbox}
+            />
+            <span style={styles.checkboxText}>他のユーザーからのメールアドレス検索を許可する</span>
+          </label>
         </div>
 
         {/* 認証維持期間設定 */}
@@ -717,6 +712,12 @@ const styles = {
   label: { color: theme.colors.textSub, fontSize: '0.8rem', marginBottom: '8px', display: 'block', fontWeight: 'bold' },
   subLabel: { color: theme.colors.textSub, fontSize: '0.75rem', marginBottom: '6px', display: 'block' },
   readOnlyEmail: { width: '100%', boxSizing: 'border-box', padding: '10px', backgroundColor: '#e9ecef', borderRadius: '8px', fontSize: '0.9rem', color: '#495057', border: '1px solid #ced4da', outline: 'none' },
+  
+  // 💡 【新設】チェックボックス用のスタイル
+  checkboxContainer: { display: 'flex', alignItems: 'center', cursor: 'pointer', marginTop: '5px' },
+  checkbox: { width: '18px', height: '18px', cursor: 'pointer', marginRight: '10px' },
+  checkboxText: { fontSize: '0.85rem', color: theme.colors.textMain },
+
   logoutBtn: { 
     ...commonStyles.button, 
     marginTop: '30px', 
