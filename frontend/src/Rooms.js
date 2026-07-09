@@ -356,7 +356,7 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
     return (
       <img 
-        src={signedUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+        src={signedUrl || '/images/default-avatar.png'} 
         alt="Avatar" 
         style={styles.avatarImage} 
       />
