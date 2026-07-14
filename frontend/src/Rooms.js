@@ -66,20 +66,6 @@ const Rooms = ({ session, onSelectRoom }) => {
         let avatarPath = null;
         let signedUrl = '';
 
-        // if (!isGroup) {
-        //   const { data: members, error: rpcError } = await supabase
-        //     .rpc('get_room_members', { p_room_id: roomId });
-
-        //   if (!rpcError && members) {
-        //     const opponent = members.find(u => u.user_id !== session.user.id);
-        //     if (opponent && opponent.profiles) {
-        //       displayName = opponent.profiles.display_name || opponent.profiles.email;
-        //       opponentEmail = opponent.profiles.email;
-        //     } else {
-        //       displayName = "相手不在";
-        //     }
-        //   }
-        // }
         if (!isGroup) {
           const opponentInfo = await getOpponentInfo(roomId);
           displayName = opponentInfo.displayName;
@@ -125,21 +111,6 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
   }, [session, getOpponentInfo]);
 
-  // useEffect(() => {
-  //   if (session?.user?.id) {
-  //     fetchAllRooms();
-  //     const channel = supabase
-  //       .channel(`room_changes_${session.user.id}`)
-  //       .on('postgres_changes', 
-  //           { event: '*', schema: 'public', table: 'room_members', filter: `user_id=eq.${session.user.id}` }, 
-  //           () => fetchAllRooms()
-  //       )
-  //       .subscribe();
-  //     return () => supabase.removeChannel(channel);
-  //   }
-  // }, [session?.user?.id, fetchAllRooms]);
-
-  // ↓RLSの設定が上手くいったら、上記を消して下記を採用する。動作確認を行う。
   useEffect(() => {
     // 💡 session.access_token があるかもチェック条件に加える
     if (session?.user?.id && session?.access_token) {
@@ -159,35 +130,86 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
   }, [session, fetchAllRooms]); // 💡 依存配列に session 全体を指定
 
-  // --- グループ作成 ---
+  // // --- グループ作成 ---
+  // const createGroup = async () => {
+  //   if (!newGroupName.trim()) return;
+  //   const { data: roomData, error: roomError } = await supabase
+  //     .from('rooms')
+  //     .insert([{ name: newGroupName, created_by: session.user.id, is_group: true }])
+  //     .select().single();
+    
+  //   if (roomError) return alert("作成失敗");
+    
+  //   await supabase.from('room_members').insert([{ 
+  //     room_id: roomData.id, 
+  //     user_id: session.user.id,
+  //     status: 'joined',
+  //     is_hidden: false,
+  //     is_deleted: false
+  //   }]);
+    
+  //   setNewGroupName('');
+  //   setIsModalOpen(false);
+  //   fetchAllRooms();
+  // };
+
+  // =========================================================================
+  // 💡 新コード（グループ名のサニタイズ・文字数バリデーション防御を追加）
+  // =========================================================================
   const createGroup = async () => {
-    if (!newGroupName.trim()) return;
-    const { data: roomData, error: roomError } = await supabase
-      .from('rooms')
-      .insert([{ name: newGroupName, created_by: session.user.id, is_group: true }])
-      .select().single();
-    
-    if (roomError) return alert("作成失敗");
-    
-    await supabase.from('room_members').insert([{ 
-      room_id: roomData.id, 
-      user_id: session.user.id,
-      status: 'joined',
-      is_hidden: false,
-      is_deleted: false
-    }]);
-    
-    setNewGroupName('');
-    setIsModalOpen(false);
-    fetchAllRooms();
+    // 1. サニタイズ（前後の余分な空白を除去）
+    const cleanedGroupName = newGroupName.trim();
+
+    // 2. 基本的な入力チェック（空文字のブロック）
+    if (!cleanedGroupName) return;
+
+    // 3. バリデーション：文字数制限（画面表示の崩れや悪意ある長文登録を防ぐ）
+    if (cleanedGroupName.length > 30) {
+      alert("グループ名は30文字以内で入力してください。");
+      return;
+    }
+
+    try {
+      // 4. 安全に処理された cleanedGroupName を送信
+      const { data: roomData, error: roomError } = await supabase
+        .from('rooms')
+        .insert([{ 
+          name: cleanedGroupName, 
+          created_by: session.user.id, 
+          is_group: true 
+        }])
+        .select()
+        .single();
+      
+      if (roomError) {
+        console.error("グループ作成エラー:", roomError.message);
+        alert("グループの作成に失敗しました。");
+        return;
+      }
+      
+      // ルームメンバー（自分）をjoined状態で追加
+      const { error: memberError } = await supabase
+        .from('room_members')
+        .insert([{ 
+          room_id: roomData.id, 
+          user_id: session.user.id,
+          status: 'joined',
+          is_hidden: false,
+          is_deleted: false
+        }]);
+
+      if (memberError) throw memberError;
+      
+      // 成功時の初期化処理
+      setNewGroupName('');
+      setIsModalOpen(false);
+      fetchAllRooms();
+    } catch (err) {
+      console.error("グループメンバー登録エラー:", err);
+      alert("グループ作成後の初期設定に失敗しました。");
+    }
   };
 
-  // // --- メニュー制御 ---
-  // const handleContextMenu = (e, roomId) => {
-  //   e.preventDefault();
-  //   const clickY = e.pageY || e.touches?.[0].pageY;
-  //   setContextMenu({ visible: true, x: 0, y: clickY, roomId: roomId });
-  // };
   // --- メニュー制御 ---
   const handleContextMenu = (e, roomId) => {
     // 💡 追記：ブラウザ側がキャンセル不可（cancelable=false）と言っている時は preventDefault を呼ばない
@@ -224,24 +246,8 @@ const Rooms = ({ session, onSelectRoom }) => {
     closeContextMenu();
   };
 
-  // const fetchHiddenRooms = async () => {
-  //   // 💡 修正：非表示(is_hidden=true)だが、まだ削除されていない(is_deleted=false)ものを取得
-  //   const { data, error } = await supabase
-  //     .from('room_members')
-  //     .select(`
-  //       room_id,
-  //       rooms ( name )
-  //     `)
-  //     .eq('user_id', session.user.id)
-  //     .eq('is_hidden', true)
-  //     .eq('is_deleted', false);
-
-  //   if (!error) setHiddenRooms(data || []);
-  //   setIsHiddenListOpen(true);
-  // };
-
   const fetchHiddenRooms = async () => {
-    // 💡 修正：is_hidden=true かつ is_deleted=false のものを取得
+    // is_hidden=true かつ is_deleted=false のものを取得
     // 後続の動的名前取得のために、rooms から is_group も一緒にセレクトします
     const { data, error } = await supabase
       .from('room_members')
@@ -267,22 +273,6 @@ const Rooms = ({ session, onSelectRoom }) => {
         let avatarPath = null;
         let signedUrl = '';
 
-        // 💡 グループでない（個人チャット）なら、通常一覧と同じロジックで相手の最新名を取得
-        // if (!isGroup) {
-        //   const { data: members, error: rpcError } = await supabase
-        //     .rpc('get_room_members', { p_room_id: roomId });
-
-        //   if (!rpcError && members) {
-        //     const opponent = members.find(u => u.user_id !== session.user.id);
-        //     if (opponent && opponent.profiles) {
-        //       // ニックネームがあればそれ、無ければメールアドレスを表示
-        //       displayName = opponent.profiles.display_name || opponent.profiles.email;
-        //       avatarPath = opponent.profiles.avatar_url;
-        //     } else {
-        //       displayName = "相手不在";
-        //     }
-        //   }
-        // }
         if (!isGroup) {
           const opponentInfo = await getOpponentInfo(roomId);
           displayName = opponentInfo.displayName;
@@ -356,7 +346,7 @@ const Rooms = ({ session, onSelectRoom }) => {
     }
     return (
       <img 
-        src={signedUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+        src={signedUrl || '/images/default-avatar.png'} 
         alt="Avatar" 
         style={styles.avatarImage} 
       />
@@ -486,14 +476,9 @@ const styles = {
   createBtn: { padding: '5px 15px', fontSize: '0.8rem', backgroundColor: theme.colors.primary, color: '#fff', border: 'none', borderRadius: '20px', cursor: 'pointer' },
   secondaryBtn: { padding: '5px 15px', fontSize: '0.8rem', backgroundColor: '#f0f0f0', color: '#666', border: `1px solid ${theme.colors.border}`, borderRadius: '20px', cursor: 'pointer' },
   roomItem: { padding: '15px', borderBottom: `1px solid ${theme.colors.border}`, cursor: 'pointer', backgroundColor: '#fff', position: 'relative', userSelect: 'none' },
-  // 💡 追加：横並び用フレックスボックス
   roomFlexContainer: { display: 'flex', alignItems: 'center' },
-  // 💡 追加：テキストコンテンツ領域
   roomContentArea: { flex: 1, minWidth: 0 }, // minWidth: 0 はテキスト省略（...）を正常に効かせるため
-  
-  // 💡 追加：個人アバター画像スタイル
   avatarImage: { width: '42px', height: '42px', borderRadius: '50%', objectFit: 'cover', marginRight: '12px', border: `1px solid ${theme.colors.border}`, flexShrink: 0 },
-  // 💡 追加：グループデフォルトアイコンスタイル
   groupAvatar: { width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#e9ecef', color: '#495057', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', fontWeight: 'bold', marginRight: '12px', border: `1px solid ${theme.colors.border}`, flexShrink: 0 },
   lastMsg: { fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },

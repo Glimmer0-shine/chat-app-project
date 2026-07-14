@@ -212,20 +212,84 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
+  // const handleEmailUpdate = async (e) => {
+  //   e.preventDefault();
+  //   if (!newEmail || !confirmEmail) return alert('全ての項目を入力してください。');
+  //   if (newEmail === session.user.email) return alert('現在のメールアドレスと同じです。');
+  //   if (newEmail !== confirmEmail) return alert('新しいメールアドレスと確認用が一致しません。');
+
+  //   try {
+  //     setUpdating(true);
+  //     const { error: emailError } = await supabase.auth.updateUser({ email: newEmail });
+  //     if (emailError) throw emailError;
+
+  //     const { error: dbEmailError } = await supabase
+  //       .from('profiles')
+  //       .update({ email: newEmail })
+  //       .eq('id', session.user.id);
+
+  //     if (dbEmailError) throw dbEmailError;
+
+  //     alert('メールアドレスと関連データを更新しました！次回から新しいアドレスでログインしてください。');
+  //     setNewEmail('');
+  //     setConfirmEmail('');
+  //     setShowEmailForm(false);
+  //   } catch (error) {
+  //     alert('変更に失敗しました: ' + error.message);
+  //   } finally {
+  //     setUpdating(false);
+  //   }
+  // };
+
+  // =========================================================================
+  // 💡 新コード（メールアドレスのサニタイズ・厳格なバリデーションを追加）
+  // =========================================================================
   const handleEmailUpdate = async (e) => {
     e.preventDefault();
-    if (!newEmail || !confirmEmail) return alert('全ての項目を入力してください。');
-    if (newEmail === session.user.email) return alert('現在のメールアドレスと同じです。');
-    if (newEmail !== confirmEmail) return alert('新しいメールアドレスと確認用が一致しません。');
+
+    // 1. サニタイズ
+    const cleanedNewEmail = newEmail.trim();
+    const cleanedConfirmEmail = confirmEmail.trim();
+
+    // 2. 入力チェック
+    if (!cleanedNewEmail || !cleanedConfirmEmail) {
+      alert('全ての項目を入力してください。');
+      return;
+    }
+
+    // 3. バリデーション：文字数制限（国際規格254文字）
+    if (cleanedNewEmail.length > 254) {
+      alert("入力されたメールアドレスが長すぎます。");
+      return;
+    }
+
+    // 4. バリデーション：正規表現による形式チェック（前回解説した暗号ルールです！）
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanedNewEmail)) {
+      alert("新しいメールアドレスの形式が正しくありません。");
+      return;
+    }
+
+    // 5. ビジネスロジックチェック
+    if (cleanedNewEmail === session.user.email) {
+      alert('現在のメールアドレスと同じです。');
+      return;
+    }
+    if (cleanedNewEmail !== cleanedConfirmEmail) {
+      alert('新しいメールアドレスと確認用が一致しません。');
+      return;
+    }
 
     try {
       setUpdating(true);
-      const { error: emailError } = await supabase.auth.updateUser({ email: newEmail });
+      // Supabaseの認証用アドレスを更新
+      const { error: emailError } = await supabase.auth.updateUser({ email: cleanedNewEmail });
       if (emailError) throw emailError;
 
+      // 自作のデータベース（profilesテーブル）も同期して更新
       const { error: dbEmailError } = await supabase
         .from('profiles')
-        .update({ email: newEmail })
+        .update({ email: cleanedNewEmail })
         .eq('id', session.user.id);
 
       if (dbEmailError) throw dbEmailError;
@@ -241,11 +305,65 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
+  // const handlePasswordUpdate = async (e) => {
+  //   e.preventDefault();
+  //   if (!currentPassword || !newPassword || !confirmPassword) return alert('全ての項目を入力してください。');
+  //   if (newPassword.length < 6) return alert('新しいパスワードは6文字以上必要です。');
+  //   if (newPassword !== confirmPassword) return alert('新しいパスワードと確認用が一致しません。');
+
+  //   try {
+  //     setUpdating(true);
+  //     await verifyCurrentPassword(currentPassword);
+
+  //     const { error: pwdError } = await supabase.auth.updateUser({ password: newPassword });
+  //     if (pwdError) throw pwdError;
+
+  //     alert('パスワードを正常に更新しました。');
+  //     setCurrentPassword('');
+  //     setNewPassword('');
+  //     setConfirmPassword('');
+  //     setShowPasswordForm(false);
+  //   } catch (error) {
+  //     alert('変更に失敗しました: ' + error.message);
+  //   } finally {
+  //     setUpdating(false);
+  //   }
+  // };
+
+  // =========================================================================
+  // 💡 新コード（パスワードのバリデーション強化）
+  // =========================================================================
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
-    if (!currentPassword || !newPassword || !confirmPassword) return alert('全ての項目を入力してください。');
-    if (newPassword.length < 6) return alert('新しいパスワードは6文字以上必要です。');
-    if (newPassword !== confirmPassword) return alert('新しいパスワードと確認用が一致しません。');
+
+    // 💡 パスワードは「スペースそのものをパスワードとして使いたい人」がいる可能性があるため、
+    // あえて trim() はせず、そのままバリデーションにかけます。
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      alert('全ての項目を入力してください。');
+      return;
+    }
+
+    // 最低文字数のバリデーション（安全性を高めるため、一般的な推奨値である6〜8文字以上に設定）
+    if (newPassword.length < 8) {
+      alert('新しいパスワードは6文字以上必要です。');
+      return;
+    }
+
+    // 最大文字数のバリデーション（極端に長いパスワードによるサーバー過負荷：Dos攻撃を防ぐための上限設定）
+    if (newPassword.length > 72) {
+      alert('新しいパスワードは72文字以内で設定してください。');
+      return;
+    }
+
+    if (newPassword === currentPassword) {
+      alert('新しいパスワードが現在のパスワードと同じです。変更してください。');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      alert('新しいパスワードと確認用が一致しません。');
+      return;
+    }
 
     try {
       setUpdating(true);
@@ -266,14 +384,57 @@ const Profile = ({ session, onBack }) => {
     }
   };
 
+  // const handleGeneralUpdate = async () => {
+  //   try {
+  //     setUpdating(true);
+  //     // 💡 【修正】更新データに allow_email_search を追加
+  //     const { error: profileError } = await supabase
+  //       .from('profiles')
+  //       .update({ 
+  //         display_name: displayName,
+  //         allow_email_search: allowEmailSearch
+  //       })
+  //       .eq('id', session.user.id);
+  //     if (profileError) throw profileError;
+
+  //     localStorage.setItem('auth_session_limit', sessionLimit);
+  //     localStorage.setItem('auth_last_verified', Date.now().toString());
+
+  //     alert('プロフィール情報を更新しました！');
+  //     // 保存が成功したら、親コンポーネントから受け取った「戻る処理」を実行する
+  //     if (onBack) onBack();
+  //   } catch (error) {
+  //     alert('更新に失敗しました: ' + error.message);
+  //   } finally {
+  //     setUpdating(false);
+  //   }
+  // };
+
+  // =========================================================================
+  // 💡 新コード（表示名のサニタイズ・バリデーションを追加）
+  // =========================================================================
   const handleGeneralUpdate = async () => {
+    // 1. 表示名の前後の空白を除去（サニタイズ）
+    const cleanedDisplayName = displayName.trim();
+
+    // 2. バリデーション：表示名が空っぽになっていないかチェック
+    // if (!cleanedDisplayName) {
+    //   alert("表示名を入力してください。");
+    //   return;
+    // }
+
+    // 3. バリデーション：文字数制限（画面崩れを防ぐため、最大20文字程度に制限）
+    if (cleanedDisplayName.length > 20) {
+      alert("表示名は20文字以内で入力してください。");
+      return;
+    }
+
     try {
       setUpdating(true);
-      // 💡 【修正】更新データに allow_email_search を追加
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ 
-          display_name: displayName,
+          display_name: cleanedDisplayName, // サニタイズ済みの文字列を保存
           allow_email_search: allowEmailSearch
         })
         .eq('id', session.user.id);
@@ -283,6 +444,7 @@ const Profile = ({ session, onBack }) => {
       localStorage.setItem('auth_last_verified', Date.now().toString());
 
       alert('プロフィール情報を更新しました！');
+      if (onBack) onBack();
     } catch (error) {
       alert('更新に失敗しました: ' + error.message);
     } finally {
@@ -379,7 +541,7 @@ const Profile = ({ session, onBack }) => {
         <div style={styles.avatarSection}>
           <div style={styles.avatarWrapper}>
             <img 
-              src={avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+              src={avatarUrl || '/images/default-avatar.png'} 
               alt="Avatar" 
               style={styles.avatarImage} 
             />

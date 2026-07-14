@@ -7,24 +7,7 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
   const [images, setImages] = useState([]);
 
-  // // ストレージの保存先パス（フォルダ名）を決定
-  // const getStoragePath = useCallback(() => {
-  //   if (propsRoomId) return propsRoomId; // グループならそのID
-  //   if (!session?.user?.email || !friendEmail) return 'public';
-  //   const sorted = [session.user.email, friendEmail].sort();
-  //   return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_');
-  // }, [session, friendEmail, propsRoomId]);
-
-  // // 通知を送る先のトークルームIDを決定
-  // const getChatRoomId = useCallback(() => {
-  //   if (propsRoomId) return propsRoomId; // グループならそのID
-  //   const sorted = [session.user.email, friendEmail].sort();
-  //   return `${sorted[0]}-${sorted[1]}`;
-  // }, [session, friendEmail, propsRoomId]);
-
-  // const storagePath = getStoragePath();
   const storagePath = propsRoomId;
-  // const chatRoomId = getChatRoomId();
   const chatRoomId = propsRoomId;
 
   // 画像一覧の取得
@@ -36,15 +19,6 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
         limit: 100, 
         order: { column: 'created_at', ascending: false } 
       });
-
-  //   if (error) {
-  //     console.error('画像取得エラー:', error.message);
-  //   } else {
-  //     // フォルダを除外してファイルのみセット
-  //     const filesOnly = data?.filter(item => item.metadata) || [];
-  //     setImages(filesOnly);
-  //   }
-  // }, [storagePath]);
 
     if (error) {
       console.error('画像取得エラー:', error.message);
@@ -73,7 +47,6 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
       // 5. 元のデータ構造に、生成した署名付きURL（displayUrl）を合体させる
       const formattedImages = filesOnly.map((item, index) => ({
         ...item,
-        // signedUrls[index].signedUrl に安全なURLが入っています
         displayUrl: signedUrls[index]?.signedUrl 
       }));
 
@@ -127,13 +100,67 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
     ]);
   };
 
+  // const uploadImage = async (event) => {
+  //   try {
+  //     setUploading(true);
+  //     if (!event.target.files || event.target.files.length === 0) return;
+
+  //     const file = event.target.files[0];
+  //     const fileExt = file.name.split('.').pop();
+  //     const fileName = `${Date.now()}.${fileExt}`;
+  //     const filePath = `${storagePath}/${fileName}`;
+
+  //     const { error: uploadError } = await supabase.storage
+  //       .from('shared-folder')
+  //       .upload(filePath, file);
+
+  //     if (uploadError) throw uploadError;
+
+  //     // 通知メッセージを送る（これがトリガーになって相手の画面も更新される）
+  //     await sendSystemMessage("📷 アルバムに新しい写真が追加されました");
+  //     fetchImages();
+  //   } catch (error) {
+  //     console.error('Upload error:', error);
+  //     alert('アップロードに失敗しました。');
+  //   } finally {
+  //     setUploading(false);
+  //   }
+  // };
+  // 💡 修正：アップロード関数の内部で画像拡張子と不正入力を徹底検証（セキュアバイデザイン）
   const uploadImage = async (event) => {
     try {
       setUploading(true);
       if (!event.target.files || event.target.files.length === 0) return;
 
       const file = event.target.files[0];
-      const fileExt = file.name.split('.').pop();
+      
+      // 🛡️ バリデーション①：拡張子の取得と安全性チェック
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
+      if (!fileExt) {
+        alert("拡張子のないファイルはアップロードできません。");
+        return;
+      }
+
+      // 許可する画像拡張子を明示的に絞り込む（安全な画像タイプのみ）
+      const allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+      if (!allowedExtensions.includes(fileExt)) {
+        alert("許可されていないファイル形式です（JPG, JPEG, PNG, GIF, WEBP形式のみアップロード可能です）。");
+        return;
+      }
+
+      // 異常に長い拡張子によるシステムバッファ溢れ等を防ぐため、拡張子の長さも制限（例: 最大10文字）
+      if (fileExt.length > 10) {
+        alert("ファイルフォーマットが不正です。");
+        return;
+      }
+
+      // 🛡️ バリデーション②：ファイル名そのものの長さ制限（UIバグ防止、通知テキストサイズ抑制）
+      if (file.name.length > 50) {
+        alert("ファイル名が長すぎます（拡張子を含めて50文字以内の画像のみ共有可能です）。");
+        return;
+      }
+
+      // タイムスタンプを基にした一意なファイル名を安全に構築
       const fileName = `${Date.now()}.${fileExt}`;
       const filePath = `${storagePath}/${fileName}`;
 
@@ -143,7 +170,6 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
 
       if (uploadError) throw uploadError;
 
-      // 通知メッセージを送る（これがトリガーになって相手の画面も更新される）
       await sendSystemMessage("📷 アルバムに新しい写真が追加されました");
       fetchImages();
     } catch (error) {
@@ -175,12 +201,12 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
     }
   };
 
-  const getImageUrl = (fileName) => {
-    const { data } = supabase.storage
-      .from('shared-folder')
-      .getPublicUrl(`${storagePath}/${fileName}`);
-    return data.publicUrl;
-  };
+  // const getImageUrl = (fileName) => {
+  //   const { data } = supabase.storage
+  //     .from('shared-folder')
+  //     .getPublicUrl(`${storagePath}/${fileName}`);
+  //   return data.publicUrl;
+  // };
 
   return (
     <div style={{ padding: '10px' }}>
@@ -199,7 +225,9 @@ const SharedFolder = ({ session, friendEmail, roomId: propsRoomId }) => {
         ) : (
           images.map((img) => (
             <div key={img.id} style={styles.imageWrapper}>
-              <img src={getImageUrl(img.name)} alt={img.name} style={styles.image} loading="lazy" />
+              {/* <img src={getImageUrl(img.name)} alt={img.name} style={styles.image} loading="lazy" /> */}
+              {/* 💡 修正：安全に生成された img.displayUrl を直接 src に設定 */}
+              <img src={img.displayUrl || ''} alt={img.name} style={styles.image} loading="lazy" />
               <button onClick={() => deleteImage(img.name)} style={styles.deleteBtn}>
                 ×
               </button>

@@ -38,20 +38,6 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     return true;
   };
 
-  // // 💡 【新設】自分宛ての保留中の申請があるかチェック（バッジ用）
-  // const checkUnreadNotifications = useCallback(async () => {
-  //   if (!session?.user?.id) return;
-  //   const { count, error } = await supabase
-  //     .from('friend_requests')
-  //     .select('*', { count: 'exact', head: true })
-  //     .eq('receiver_id', session.user.id)
-  //     .eq('status', 'pending');
-
-  //   if (!error) {
-  //     setHasNewNotifications(count > 0);
-  //   }
-  // }, [session]);
-
   // 💡 【修正】友達申請とルーム招待の両方をチェックする
   const checkUnreadNotifications = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -128,27 +114,26 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
     checkUnreadNotifications();
   }, [fetchFriends, checkUnreadNotifications]);
 
-  // // --- 2. 友達追加（検索）処理 ---
-  // const addFriend = async () => {
+
+  // const addFriendRequest = async () => {
   //   if (!friendEmail.trim()) return;
   //   if (friendEmail === session.user.email) {
   //     alert("自分自身は追加できません");
   //     return;
   //   }
 
-  //   // 💡 【新設】検索前に本日の試行回数（10回）をチェック
   //   if (!checkAndIncrementSearchCount()) {
   //     return;
   //   }
 
   //   setLoading(true);
 
-  //   // 💡 【修正】相手のプロフィールを取得する際、allow_email_search が true である条件を追加
+  //   // 相手のプロフィールを取得（検索許可されている人のみ）
   //   const { data: profile, error: checkError } = await supabase
   //     .from('profiles')
   //     .select('id, email, allow_email_search')
   //     .eq('email', friendEmail)
-  //     .eq('allow_email_search', true) // 🔍 検索許可が true の人のみヒットさせる
+  //     .eq('allow_email_search', true)
   //     .maybeSingle();
 
   //   if (checkError) {
@@ -156,12 +141,12 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
   //   }
     
   //   if (!profile) {
-  //     // 💡 検索OFFにしている場合も「見つかりませんでした」に統一することで、アカウントの存在自体を隠匿・保護します
   //     alert("そのメールアドレスのユーザーは見つかりませんでした、または検索が許可されていません。");
   //     setLoading(false);
   //     return;
   //   }
 
+  //   // 既に友達リストにいるかチェック
   //   const isAlreadyFriend = friendsList.some(f => f.friend_email === friendEmail);
   //   if (isAlreadyFriend) {
   //     alert("そのユーザーは既に追加されています");
@@ -169,103 +154,147 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
   //     return;
   //   }
 
+  //   // 💡 既に申請中、あるいは過去に拒否されたレコードがあるか確認
+  //   const { data: existingReq } = await supabase
+  //     .from('friend_requests')
+  //     .select('status')
+  //     .eq('sender_id', session.user.id)
+  //     .eq('receiver_id', profile.id)
+  //     .maybeSingle();
+
+  //   if (existingReq) {
+  //     if (existingReq.status === 'pending') {
+  //       alert("既に友達申請を送信済みです（相手の承認待ちです）。");
+  //     } else {
+  //       alert("既に申請手続きが行われています。");
+  //     }
+  //     setLoading(false);
+  //     return;
+  //   }
+
+  //   // 💡 friend_requests テーブルへ申請データをupsert/insert
   //   const { error } = await supabase
-  //     .from('friends')
+  //     .from('friend_requests')
   //     .upsert([
   //       { 
-  //         user_id: session.user.id, 
-  //         friend_email: friendEmail,
-  //         friend_user_id: profile.id,
-  //         is_blocked: false,
-  //         is_hidden: false
+  //         sender_id: session.user.id, 
+  //         receiver_id: profile.id,
+  //         status: 'pending'
   //       }
-  //     ], { onConflict: 'user_id,friend_email' });
+  //     ], { onConflict: 'sender_id,receiver_id' });
 
   //   if (error) {
-  //     alert('追加に失敗しました');
+  //     alert('友達申請の送信に失敗しました');
   //   } else {
   //     setFriendEmail('');
-  //     alert(friendEmail + ' を追加しました！');
-  //     fetchFriends();
+  //     alert(friendEmail + ' へ友達申請を送信しました！相手が承認すると連絡帳に表示されます。');
   //   }
   //   setLoading(false);
   // };
 
+  // =========================================================================
+  // 💡 新コード（サニタイズ・バリデーション防御を追加したリファクタリング版）
+  // =========================================================================
   const addFriendRequest = async () => {
-    if (!friendEmail.trim()) return;
-    if (friendEmail === session.user.email) {
+    // 1. サニタイズ（前後の余分な空白を除去）
+    const cleanedEmail = friendEmail.trim();
+
+    // 2. 基本的な入力チェック
+    if (!cleanedEmail) return;
+
+    // 3. バリデーション：文字数制限（極端に長い文字列による過負荷を防ぐ）
+    if (cleanedEmail.length > 254) {
+      alert("入力されたメールアドレスが長すぎます。");
+      return;
+    }
+
+    // 4. バリデーション：メールアドレスの形式チェック（簡易的な正規表現で不正な文字列を即弾く）
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanedEmail)) {
+      alert("メールアドレスの形式が正しくありません。");
+      return;
+    }
+
+    // 5. ビジネスロジックチェック
+    if (cleanedEmail === session.user.email) {
       alert("自分自身は追加できません");
       return;
     }
 
+    // 6. 検索回数制限チェック
     if (!checkAndIncrementSearchCount()) {
       return;
     }
 
     setLoading(true);
 
-    // 相手のプロフィールを取得（検索許可されている人のみ）
-    const { data: profile, error: checkError } = await supabase
-      .from('profiles')
-      .select('id, email, allow_email_search')
-      .eq('email', friendEmail)
-      .eq('allow_email_search', true)
-      .maybeSingle();
+    try {
+      // 相手のプロフィールを取得（サニタイズ済みの cleanedEmail を使用）
+      const { data: profile, error: checkError } = await supabase
+        .from('profiles')
+        .select('id, email, allow_email_search')
+        .eq('email', cleanedEmail)
+        .eq('allow_email_search', true)
+        .maybeSingle();
 
-    if (checkError) {
-      console.error("プロフィール検索エラー:", checkError.message);
-    }
-    
-    if (!profile) {
-      alert("そのメールアドレスのユーザーは見つかりませんでした、または検索が許可されていません。");
-      setLoading(false);
-      return;
-    }
-
-    // 既に友達リストにいるかチェック
-    const isAlreadyFriend = friendsList.some(f => f.friend_email === friendEmail);
-    if (isAlreadyFriend) {
-      alert("そのユーザーは既に追加されています");
-      setLoading(false);
-      return;
-    }
-
-    // 💡 既に申請中、あるいは過去に拒否されたレコードがあるか確認
-    const { data: existingReq } = await supabase
-      .from('friend_requests')
-      .select('status')
-      .eq('sender_id', session.user.id)
-      .eq('receiver_id', profile.id)
-      .maybeSingle();
-
-    if (existingReq) {
-      if (existingReq.status === 'pending') {
-        alert("既に友達申請を送信済みです（相手の承認待ちです）。");
-      } else {
-        alert("既に申請手続きが行われています。");
+      if (checkError) {
+        console.error("プロフィール検索エラー:", checkError.message);
       }
-      setLoading(false);
-      return;
-    }
+      
+      if (!profile) {
+        alert("そのメールアドレスのユーザーは見つかりませんでした、または検索が許可されていません。");
+        setLoading(false);
+        return;
+      }
 
-    // 💡 friend_requests テーブルへ申請データをupsert/insert
-    const { error } = await supabase
-      .from('friend_requests')
-      .upsert([
-        { 
-          sender_id: session.user.id, 
-          receiver_id: profile.id,
-          status: 'pending'
+      // 既に友達リストにいるかチェック
+      const isAlreadyFriend = friendsList.some(f => f.friend_email === cleanedEmail);
+      if (isAlreadyFriend) {
+        alert("そのユーザーは既に追加されています");
+        setLoading(false);
+        return;
+      }
+
+      // 既に申請中、あるいは過去に拒否されたレコードがあるか確認
+      const { data: existingReq } = await supabase
+        .from('friend_requests')
+        .select('status')
+        .eq('sender_id', session.user.id)
+        .eq('receiver_id', profile.id)
+        .maybeSingle();
+
+      if (existingReq) {
+        if (existingReq.status === 'pending') {
+          alert("既に友達申請を送信済みです（相手の承認待ちです）。");
+        } else {
+          alert("既に申請手続きが行われています。");
         }
-      ], { onConflict: 'sender_id,receiver_id' });
+        setLoading(false);
+        return;
+      }
 
-    if (error) {
-      alert('友達申請の送信に失敗しました');
-    } else {
-      setFriendEmail('');
-      alert(friendEmail + ' へ友達申請を送信しました！相手が承認すると連絡帳に表示されます。');
+      // friend_requests テーブルへ申請データをupsert/insert
+      const { error } = await supabase
+        .from('friend_requests')
+        .upsert([
+          { 
+            sender_id: session.user.id, 
+            receiver_id: profile.id,
+            status: 'pending'
+          }
+        ], { onConflict: 'sender_id,receiver_id' });
+
+      if (error) {
+        alert('友達申請の送信に失敗しました');
+      } else {
+        setFriendEmail('');
+        alert(cleanedEmail + ' へ友達申請を送信しました！相手が承認すると連絡帳に表示されます。');
+      }
+    } catch (e) {
+      console.error("友達申請中に例外が発生しました:", e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // --- 3. 長押しイベントのハンドラー ---
@@ -510,7 +539,7 @@ const Friends = ({ session, onStartChat, onOpenSettings }) => {
             onMouseLeave={handleTouchEnd}
           >
             <img 
-              src={f.avatar_signed_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+              src={f.avatar_signed_url || '/images/default-avatar.png'} 
               alt="Avatar" 
               style={styles.avatarImage} 
             />

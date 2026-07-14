@@ -32,13 +32,19 @@ const Notifications = ({ session, onClose, onRefreshFriends, onOpenRoom }) => {
           const { data: signedData } = await supabase.storage.from('avatars').createSignedUrl(path, 300);
           if (signedData) signedUrl = signedData.signedUrl;
         }
+
+        // 🛡️ セキュアバイデザイン：表示名の検証・文字数制限
+        let rawName = req.profiles?.display_name || '名前未設定';
+        const cleanedName = rawName.trim().length > 20 ? `${rawName.trim().substring(0, 25)}...` : rawName.trim();
+
         return {
           type: 'friend',
           id: `friend_${req.id}`, 
           originalId: req.id,
           senderId: req.sender_id,
           email: req.profiles?.email,
-          title: req.profiles?.display_name || '名前未設定',
+          // title: req.profiles?.display_name || '名前未設定',
+          title: cleanedName,
           message: '友達申請が届いています',
           avatarUrl: signedUrl,
           createdAt: new Date(req.created_at).getTime()
@@ -63,17 +69,34 @@ const Notifications = ({ session, onClose, onRefreshFriends, onOpenRoom }) => {
         return [];
       }
 
-      return (data || []).map(inv => ({
-        type: 'room',
-        id: `room_${inv.room_id}`,
-        originalId: inv.room_id,
-        senderId: null,
-        email: null,
-        title: inv.rooms?.name || 'グループチャット',
-        message: 'グループに招待されています',
-        avatarUrl: null, 
-        createdAt: new Date(inv.invited_at).getTime()
-      }));
+      // return (data || []).map(inv => ({
+      //   type: 'room',
+      //   id: `room_${inv.room_id}`,
+      //   originalId: inv.room_id,
+      //   senderId: null,
+      //   email: null,
+      //   title: inv.rooms?.name || 'グループチャット',
+      //   message: 'グループに招待されています',
+      //   avatarUrl: null, 
+      //   createdAt: new Date(inv.invited_at).getTime()
+      // }));
+      return (data || []).map(inv => {
+        // 🛡️ セキュアバイデザイン：ルーム名も同様に最大25文字に制限してUI崩れを防止
+        let rawRoomName = inv.rooms?.name || 'グループチャット';
+        const cleanedRoomName = rawRoomName.trim().length > 30 ? `${rawRoomName.trim().substring(0, 25)}...` : rawRoomName.trim();
+
+        return {
+          type: 'room',
+          id: `room_${inv.room_id}`,
+          originalId: inv.room_id,
+          senderId: null,
+          email: null,
+          title: cleanedRoomName,
+          message: 'グループに招待されています',
+          avatarUrl: null, 
+          createdAt: new Date(inv.invited_at).getTime()
+        };
+      });
     };
 
     const [friendReqs, roomInvites] = await Promise.all([fetchFriends(), fetchRooms()]);
@@ -86,7 +109,7 @@ const Notifications = ({ session, onClose, onRefreshFriends, onOpenRoom }) => {
     fetchNotifications();
   }, [fetchNotifications]);
 
-  // --- 友達申請の処理（変更なし） ---
+  // --- 友達申請の処理 ---
   const handleFriendResponse = async (requestId, senderId, senderEmail, action) => {
     if (loading) return;
     setLoading(true);
@@ -140,7 +163,7 @@ const Notifications = ({ session, onClose, onRefreshFriends, onOpenRoom }) => {
                   <div style={styles.groupAvatar}>G</div>
                 ) : (
                   <img 
-                    src={notif.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&crop=face'} 
+                    src={notif.avatarUrl || '/images/default-avatar.png'} 
                     alt="Avatar" 
                     style={styles.avatarImage} 
                   />

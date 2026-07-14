@@ -83,16 +83,49 @@ const Calendar = ({ session, roomId }) => {
   };
 
   // --- アクション関数 ---
+  // const addEvent = async () => {
+  //   if (!title || !selectedDate) return;
+  //   const dateStr = selectedDate.toLocaleDateString('sv-SE');
+  //   const { error } = await supabase.from('events').insert([{
+  //     title, color, event_date: dateStr, event_time: time,
+  //     room_id: roomId, user_id: session.user.id, created_by_email: session.user.email
+  //   }]);
+  //   if (!error) {
+  //     await sendSystemNotification(`📅 予定追加: ${title} (${time})`);
+  //     setTitle(''); fetchEvents();
+  //   }
+  // };
+  // =========================================================================
+  // 💡 修正後：addEvent（サニタイズと25文字バリデーション防御を追加）
+  // =========================================================================
   const addEvent = async () => {
-    if (!title || !selectedDate) return;
+    // 1. サニタイズ
+    const cleanedTitle = title.trim();
+
+    // 2. 空白チェックと選択日チェック
+    if (!cleanedTitle || !selectedDate) return;
+
+    // 3. 文字数制限（カレンダーのマス目崩れ＆通知経由のXSSコンテキスト対策）
+    if (cleanedTitle.length > 25) {
+      alert("予定タイトルは25文字以内で入力してください。");
+      return;
+    }
+
     const dateStr = selectedDate.toLocaleDateString('sv-SE');
     const { error } = await supabase.from('events').insert([{
-      title, color, event_date: dateStr, event_time: time,
-      room_id: roomId, user_id: session.user.id, created_by_email: session.user.email
+      title: cleanedTitle, // 安全なタイトルを挿入
+      color, 
+      event_date: dateStr, 
+      event_time: time,
+      room_id: roomId, 
+      user_id: session.user.id, 
+      created_by_email: session.user.email
     }]);
+
     if (!error) {
-      await sendSystemNotification(`📅 予定追加: ${title} (${time})`);
-      setTitle(''); fetchEvents();
+      await sendSystemNotification(`📅 予定追加: ${cleanedTitle} (${time})`);
+      setTitle(''); 
+      fetchEvents();
     }
   };
 
@@ -107,20 +140,61 @@ const Calendar = ({ session, roomId }) => {
   //   if (!error) fetchEvents();
   // };
 
-  // 💡 更新処理の修正：通知対応 ＆ 汎用的なテキスト組み立て
+  // // 💡 更新処理の修正：通知対応 ＆ 汎用的なテキスト組み立て
+  // const updateEvent = async (id, updates) => {
+  //   // 1. 通知用に、変更前のイベント情報を特定する
+  //   const targetEvent = events.find(e => e.id === id);
+  //   if (!targetEvent) return;
+
+  //   const { error } = await supabase.from('events').update(updates).eq('id', id);
+  //   if (!error) {
+  //     // 2. 何が変更されたかに応じて、通知メッセージを動的に作成
+  //     let notificationText = `📝 予定変更 [${targetEvent.title}]: `;
+  //     if (updates.title) notificationText += `タイトルを「${updates.title}」に変更`;
+  //     if (updates.event_time) notificationText += `時刻を ${updates.event_time} に変更`;
+  //     if (updates.event_date) notificationText += `日付を ${updates.event_date} に変更`;
+  //     if (updates.color) notificationText += `ラベルの色を変更`;
+
+  //     await sendSystemNotification(notificationText);
+  //     fetchEvents();
+  //   }
+  // };
+  // =========================================================================
+  // 💡 修正後：updateEvent（関数内部でタイトルのサニタイズ＆25文字制限を実行）
+  // =========================================================================
   const updateEvent = async (id, updates) => {
-    // 1. 通知用に、変更前のイベント情報を特定する
     const targetEvent = events.find(e => e.id === id);
     if (!targetEvent) return;
 
-    const { error } = await supabase.from('events').update(updates).eq('id', id);
+    // 💡 データの安全な入れ物を用意
+    let finalUpdates = { ...updates };
+
+    // 💡 もし更新データの中に「タイトル（title）」が含まれていた場合のみチェックを実行
+    if (updates.title !== undefined) {
+      const cleanedTitle = updates.title.trim();
+      
+      // 空白だけの場合は処理を中断
+      if (!cleanedTitle) return;
+
+      // 25文字を超える場合はアラートを出してブロック
+      if (cleanedTitle.length > 25) {
+        alert("予定タイトルは25文字以内で入力してください。");
+        return;
+      }
+
+      // サニタイズ済みの綺麗なタイトルに差し替える
+      finalUpdates.title = cleanedTitle;
+    }
+
+    // 安全が確認された finalUpdates を使ってSupabaseを更新
+    const { error } = await supabase.from('events').update(finalUpdates).eq('id', id);
+    
     if (!error) {
-      // 2. 何が変更されたかに応じて、通知メッセージを動的に作成
       let notificationText = `📝 予定変更 [${targetEvent.title}]: `;
-      if (updates.title) notificationText += `タイトルを「${updates.title}」に変更`;
-      if (updates.event_time) notificationText += `時刻を ${updates.event_time} に変更`;
-      if (updates.event_date) notificationText += `日付を ${updates.event_date} に変更`;
-      if (updates.color) notificationText += `ラベルの色を変更`;
+      if (finalUpdates.title) notificationText += `タイトルを「${finalUpdates.title}」に変更`;
+      if (finalUpdates.event_time) notificationText += `時刻を ${finalUpdates.event_time} に変更`;
+      if (finalUpdates.event_date) notificationText += `日付を ${finalUpdates.event_date} に変更`;
+      if (finalUpdates.color) notificationText += `ラベルの色を変更`;
 
       await sendSystemNotification(notificationText);
       fetchEvents();
@@ -252,7 +326,7 @@ const Calendar = ({ session, roomId }) => {
                   <div style={{ display: 'flex', gap: '5px' }}>
                     <button onClick={() => { const t = prompt("時刻(HH:MM)", e.event_time); if(t) updateEvent(e.id, {event_time: t}); }} style={styles.actionBtn}>時刻変更</button>
                     <button onClick={() => { const d = prompt("日付(YYYY-MM-DD)", e.event_date); if(d) updateEvent(e.id, {event_date: d}); }} style={styles.actionBtn}>移動</button>
-                    <button onClick={() => { const newTitle = prompt("新しい予定タイトル", e.title); if(newTitle && newTitle.trim()) updateEvent(e.id, { title: newTitle.trim() }); }} style={styles.actionBtn}>タイトル変更</button>
+                    <button onClick={() => { const newTitle = prompt("新しい予定タイトル", e.title); if(newTitle) updateEvent(e.id, { title: newTitle }); }} style={styles.actionBtn}>タイトル変更</button>
                     <button onClick={() => deleteEvent(e.id)} style={{ ...styles.actionBtn, color: 'red' }}>削除</button>
                   </div>
                 </div>
