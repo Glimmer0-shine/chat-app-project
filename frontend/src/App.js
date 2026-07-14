@@ -10,6 +10,7 @@ import { theme, commonStyles } from './theme';
 // コンポーネント外で処理ロック用フラグを管理（無限ループ・二重通信を物理的に防止）
 let isCheckingStatus = false;
 let isInitializing = false; // 🚀 起動処理の重複を防ぐためのフラグ
+let hasCheckedNicknameInSession = false; // 🛡️ セキュアバイデザイン：同一セッション内でのニックネーム二重チェック防止
 
 function App() {
   // --- 1. ステート定義 ---
@@ -19,6 +20,38 @@ function App() {
   const [currentChatRoomId, setCurrentChatRoomId] = useState(() => localStorage.getItem('currentChatRoomId') || null);
   const [showProfile, setShowProfile] = useState(() => localStorage.getItem('showProfile') === 'true');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // --- 4.5. 新規ユーザー・ニックネーム未設定ユーザーの自動リダイレクト ---
+  // 💡 修正：安全にラップし、二重チェックや不要なAPI呼び出しを防ぐよう設計
+  const checkNickname = async (userId) => {
+    if (!userId || hasCheckedNicknameInSession) return;
+    
+    try {
+      hasCheckedNicknameInSession = true; // DBにアクセスする前にロック（DDS保護）
+      
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("[App.js] ニックネームチェックエラー:", error.message);
+        hasCheckedNicknameInSession = false; // エラー時は次回再試行できるよう解放
+        return;
+      }
+
+      // プロフィールの行自体がない、または表示名（ニックネーム）が空の場合
+      if (!profile || !profile.display_name) {
+        console.log("[App.js] ⚠️ ニックネーム未設定を検知。プロフィール画面へ誘導します。");
+        alert("ニックネームが未設定です。ニックネームを設定してみましょう！");
+        setShowProfile(true);
+      }
+    } catch (e) {
+      console.error("[App.js] ニックネームチェック例外:", e);
+      hasCheckedNicknameInSession = false;
+    }
+  };
 
   // --- 2. useEffect: セッション管理 ---
   useEffect(() => {
@@ -70,7 +103,12 @@ function App() {
         if (data?.is_deleted) {
           console.warn("[App.js] 🚨 退会済みユーザーを検知");
           alert("このアカウントは退会済みです。");
+          
+          // 🛡️ 退会処理時はすべてのローカルデータを安全に抹消する
           await supabase.auth.signOut();
+          localStorage.removeItem('auth_last_verified');
+          sessionStorage.removeItem('session_active');
+          hasCheckedNicknameInSession = false;
           return false; 
         }
       } catch (e) {
@@ -121,6 +159,7 @@ function App() {
           await supabase.auth.signOut();
           localStorage.removeItem('auth_last_verified');
           sessionStorage.removeItem('session_active');
+          hasCheckedNicknameInSession = false;
           setSession(null);
           
           // 🔓 処理が完了したので両方のロックを解除
@@ -151,8 +190,10 @@ function App() {
         if (!lastVerified) {
           localStorage.setItem('auth_last_verified', Date.now().toString());
         }
+        // 🛡️ 初期検証を通過した安全なセッションでニックネームチェックを実行
+        await checkNickname(initialSession.user.id);
       }
-      console.log("[App.js] 🎉 initializeAuth が無事に完了しました");
+      console.log("[App.js] 🎉 initializeAuth が無さに完了しました");
       isInitializing = false; // 🔓 正常に最後まで完了したのでロックを解除
     };
 
@@ -163,7 +204,6 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       console.log(`[App.js] 🔔 認証イベント検知: [${event}]`);
 
-      // if (currentSession && event === 'SIGNED_IN') {
       if (currentSession && event === 'SIGNED_IN' && !isInitializing) {
         console.log("[App.js] 🚪 ログインイベントに伴い、退会チェックを通します");
         const isUserActive = await checkUserStatus(currentSession.user);
@@ -171,6 +211,8 @@ function App() {
           setSession(null);
           return; 
         }
+        // 🛡️ サインイン直後に最新のアカウント名設定を検証
+        await checkNickname(currentSession.user.id);
       }
 
       setSession(currentSession);
@@ -181,6 +223,7 @@ function App() {
         }
       } else {
         sessionStorage.removeItem('session_active');
+        hasCheckedNicknameInSession = false; // セッション終了時にニックネームチェックフラグをリセット
       }
     });
 
@@ -213,38 +256,6 @@ function App() {
     localStorage.setItem('showProfile', showProfile);
   }, [activeTab, currentChatFriend, currentChatRoomId, showProfile]);
 
-  // --- 4.5. 新規ユーザー・ニックネーム未設定ユーザーの自動リダイレクト ---
-  useEffect(() => {
-    // セッションがない（ログインしていない）なら何もしない
-    if (!session?.user?.id) return;
-
-    const checkNickname = async () => {
-      try {
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('display_name')
-          .eq('id', session.user.id)
-          .maybeSingle();
-
-        if (error) {
-          console.error("[App.js] ニックネームチェックエラー:", error.message);
-          return;
-        }
-
-        // プロフィールの行自体がない、または表示名（ニックネーム）が空の場合
-        if (!profile || !profile.display_name) {
-          console.log("[App.js] ⚠️ ニックネーム未設定を検知。プロフィール画面へ誘導します。");
-          alert("ニックネームが未設定です。ニックネームを設定してみましょう！");
-          setShowProfile(true);
-        }
-      } catch (e) {
-        console.error("[App.js] ニックネームチェック例外:", e);
-      }
-    };
-
-    checkNickname();
-  }, [session?.user?.id]);
-
   // --- 5. ハンドラー ---
   const handleStartChat = (friendEmail, roomId = null) => {
     setCurrentChatFriend(friendEmail);
@@ -252,9 +263,20 @@ function App() {
     setShowProfile(false);
   };
 
-  const handleLogout = () => {
+  // 🛡️ 修正：手動ログアウト時、クライアント側のキャッシュ・セキュリティ情報を完全に抹消
+  const handleLogout = async () => {
     console.log("[App.js] 🚪 手動ログアウトがクリックされました");
-    supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("[App.js] Supabaseログアウト中の例外（無視してクリーンアップします）:", e);
+    } finally {
+      // セッション情報を完全にパージ
+      localStorage.removeItem('auth_last_verified');
+      sessionStorage.removeItem('session_active');
+      hasCheckedNicknameInSession = false;
+      setSession(null);
+    }
   };
 
   if (!session) {

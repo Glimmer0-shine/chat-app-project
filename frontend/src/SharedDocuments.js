@@ -6,24 +6,7 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
   const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState([]);
 
-  // // ストレージの保存先フォルダ名を決定
-  // const getStoragePath = useCallback(() => {
-  //   if (propsRoomId) return propsRoomId; // グループならそのUUID
-  //   if (!session?.user?.email || !friendEmail) return 'public';
-  //   const sorted = [session.user.email, friendEmail].sort();
-  //   return `${sorted[0]}-${sorted[1]}`.replace(/\./g, '_'); // 1対1用
-  // }, [session, friendEmail, propsRoomId]);
-
-  // // 通知を送る先のトークルームIDを決定
-  // const getChatRoomId = useCallback(() => {
-  //   if (propsRoomId) return propsRoomId; // グループチャットID
-  //   const sorted = [session.user.email, friendEmail].sort();
-  //   return `${sorted[0]}-${sorted[1]}`; // 1対1チャットID
-  // }, [session, friendEmail, propsRoomId]);
-
-  // const storagePath = getStoragePath();
   const storagePath = propsRoomId;
-  // const chatRoomId = getChatRoomId();
   const chatRoomId = propsRoomId;
 
   // ファイル一覧の取得
@@ -35,14 +18,6 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
         limit: 100, 
         order: { column: 'created_at', ascending: false } 
       });
-
-  //   if (error) {
-  //     console.error('ファイル取得エラー:', error.message);
-  //   } else {
-  //     const filesOnly = data?.filter(item => item.metadata) || [];
-  //     setFiles(filesOnly);
-  //   }
-  // }, [storagePath]);
 
     if (error) {
       console.error('ファイル取得エラー:', error.message);
@@ -124,12 +99,64 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
   };
 
   // アップロード
+  // const uploadFile = async (event) => {
+  //   try {
+  //     setUploading(true);
+  //     if (!event.target.files || event.target.files.length === 0) return;
+
+  //     const file = event.target.files[0];
+  //     const fileName = `${Date.now()}_${file.name}`;
+  //     const filePath = `${storagePath}/${fileName}`;
+
+  //     const { error: uploadError } = await supabase.storage
+  //       .from('shared-documents')
+  //       .upload(filePath, file);
+
+  //     if (uploadError) throw uploadError;
+
+  //     // ★通知メッセージを投稿
+  //     await sendSystemMessage(`📄 ファイル「${file.name}」が共有されました`);
+  //     fetchFiles();
+  //   } catch (error) {
+  //     console.error('Upload error:', error);
+  //     alert('アップロードに失敗しました。');
+  //   } finally {
+  //     setUploading(false);
+  //   }
+  // };
+  // 💡 修正：アップロード関数の内部でファイル名検証（セキュアバイデザイン）
   const uploadFile = async (event) => {
     try {
       setUploading(true);
       if (!event.target.files || event.target.files.length === 0) return;
 
       const file = event.target.files[0];
+      
+      // 🛡️ バリデーション①：ファイル名が長すぎる場合はUI破壊を防ぐため却下（拡張子含め50文字制限）
+      if (file.name.length > 50) {
+        alert("ファイル名が長すぎます（50文字以内のファイルのみ共有可能です）。");
+        return;
+      }
+
+      // 🛡️ バリデーション②：OSやファイルシステムで禁止されている文字のチェック（警告は出ません）
+      const forbiddenFsChars = /[<>:"/\\|?*]/;
+      if (forbiddenFsChars.test(file.name)) {
+        alert("ファイル名に利用できない特殊文字（ < > : \" / \\ | ? * など）が含まれています。");
+        return;
+      }
+
+      // 🛡️ バリデーション③：不正な制御文字（改行、タブ、ヌルバイトなど）のチェック
+      // 正規表現を使わず、文字コード（0〜31）を直接判定することでESLintの警告を完全に回避します
+      const hasControlChar = [...file.name].some(char => {
+        const code = char.charCodeAt(0);
+        return code >= 0 && code <= 31;
+      });
+
+      if (hasControlChar) {
+        alert("ファイル名に利用できない制御文字（改行や特殊コード）が含まれています。");
+        return;
+      }      
+
       const fileName = `${Date.now()}_${file.name}`;
       const filePath = `${storagePath}/${fileName}`;
 
@@ -139,7 +166,6 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
 
       if (uploadError) throw uploadError;
 
-      // ★通知メッセージを投稿
       await sendSystemMessage(`📄 ファイル「${file.name}」が共有されました`);
       fetchFiles();
     } catch (error) {
@@ -171,12 +197,12 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
     }
   };
 
-  const getDownloadUrl = (fileName) => {
-    const { data } = supabase.storage
-      .from('shared-documents')
-      .getPublicUrl(`${storagePath}/${fileName}`);
-    return data.publicUrl;
-  };
+  // const getDownloadUrl = (fileName) => {
+  //   const { data } = supabase.storage
+  //     .from('shared-documents')
+  //     .getPublicUrl(`${storagePath}/${fileName}`);
+  //   return data.publicUrl;
+  // };
 
   const formatFileName = (name) => name.includes('_') ? name.split('_').slice(1).join('_') : name;
 
@@ -197,7 +223,9 @@ const SharedDocuments = ({ session, friendEmail, roomId: propsRoomId }) => {
             <div key={file.id} style={styles.fileItem}>
               <div style={styles.fileInfo}>
                 <span style={{ marginRight: '10px' }}>📄</span>
-                <a href={getDownloadUrl(file.name)} target="_blank" rel="noopener noreferrer" style={styles.fileName}>
+                {/* <a href={getDownloadUrl(file.name)} target="_blank" rel="noopener noreferrer" style={styles.fileName}> */}
+                {/* 💡 修正：安全に生成された file.downloadUrl を直接 href に設定 */}
+                <a href={file.downloadUrl || '#'} target="_blank" rel="noopener noreferrer" style={styles.fileName}>
                   {formatFileName(file.name)}
                 </a>
               </div>
