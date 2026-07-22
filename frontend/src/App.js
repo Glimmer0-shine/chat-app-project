@@ -193,7 +193,7 @@ function App() {
         // 🛡️ 初期検証を通過した安全なセッションでニックネームチェックを実行
         await checkNickname(initialSession.user.id);
       }
-      console.log("[App.js] 🎉 initializeAuth が無さに完了しました");
+      console.log("[App.js] 🎉 initializeAuth が無事に完了しました");
       isInitializing = false; // 🔓 正常に最後まで完了したのでロックを解除
     };
 

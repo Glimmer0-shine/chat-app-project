@@ -598,7 +598,7 @@ const Profile = ({ session, onBack }) => {
           >
             <option value="0">アプリを閉じるたびに認証（毎回）</option>
             <option value="30">1ヶ月間維持</option>
-            <option value="180">半年間維持</option>
+            <option value="180">6ヶ月間維持</option>
           </select>
         </div>
 
