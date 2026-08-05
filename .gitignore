@@ -9,6 +9,7 @@ frontend/node_modules/
 frontend/build/
 frontend/.env
 frontend/.env.local
+frontend/src/AppBefore.js
 # frontend/src/supabaseClient.js
 
 # OS generated files

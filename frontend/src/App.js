@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import Chat from './Chat'; 
 import Friends from './Friends';
 import Profile from './Profile';
 import Rooms from './Rooms';
+import SplashScreen from './SplashScreen'; // 🚀 新規追加
+import Tutorial from './Tutorial';         // 🚀 新規追加
 import { theme, commonStyles } from './theme';
 
 // コンポーネント外で処理ロック用フラグを管理（無限ループ・二重通信を物理的に防止）
@@ -13,6 +15,9 @@ let isInitializing = false; // 🚀 起動処理の重複を防ぐためのフ�
 let hasCheckedNicknameInSession = false; // 🛡️ セキュアバイデザイン：同一セッション内でのニックネーム二重チェック防止
 
 function App() {
+  // --- 0. 画面表示ステート ('splash' | 'tutorial' | 'app') ---
+  const [appPhase, setAppPhase] = useState('splash');
+
   // --- 1. ステート定義 ---
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'friends');
@@ -22,12 +27,11 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   // --- 4.5. 新規ユーザー・ニックネーム未設定ユーザーの自動リダイレクト ---
-  // 💡 修正：安全にラップし、二重チェックや不要なAPI呼び出しを防ぐよう設計
   const checkNickname = async (userId) => {
     if (!userId || hasCheckedNicknameInSession) return;
     
     try {
-      hasCheckedNicknameInSession = true; // DBにアクセスする前にロック（DDS保護）
+      hasCheckedNicknameInSession = true;
       
       const { data: profile, error } = await supabase
         .from('profiles')
@@ -37,11 +41,10 @@ function App() {
 
       if (error) {
         console.error("[App.js] ニックネームチェックエラー:", error.message);
-        hasCheckedNicknameInSession = false; // エラー時は次回再試行できるよう解放
+        hasCheckedNicknameInSession = false;
         return;
       }
 
-      // プロフィールの行自体がない、または表示名（ニックネーム）が空の場合
       if (!profile || !profile.display_name) {
         console.log("[App.js] ⚠️ ニックネーム未設定を検知。プロフィール画面へ誘導します。");
         alert("ニックネームが未設定です。ニックネームを設定してみましょう！");
@@ -53,11 +56,31 @@ function App() {
     }
   };
 
+  // --- 1.5 起動シーケンスの制御 (スプラッシュ ➔ チュートリアル) ---
+  useEffect(() => {
+    const splashTimer = setTimeout(() => {
+      // 過去にチュートリアルを見たことがあるかチェック
+      const hasSeen = localStorage.getItem('has_seen_tutorial');
+      if (hasSeen === 'true') {
+        setAppPhase('app'); // すでに見たことがある場合はアプリ本体へ
+      } else {
+        setAppPhase('tutorial'); // 初めての場合はチュートリアル画面へ
+      }
+    }, 2500); // 2.5秒間ロゴを表示
+
+    // もし2.5秒経つ前に画面が破棄されたら、予約したタイマーを取り消す。画面上に存在しないコンポーネントに対して2.5秒後に状態変更（setAppPhase）を行おうさせないように。
+    return () => clearTimeout(splashTimer);
+  }, []);
+
+  const handleCompleteTutorial = () => {
+    localStorage.setItem('has_seen_tutorial', 'true');
+    setAppPhase('app');
+  };
+
   // --- 2. useEffect: セッション管理 ---
   useEffect(() => {
     console.log("[App.js] 🔐 認証管理 useEffect が起動しました");
 
-    // ユーザーが退会済みか判定する共通関数（タイムアウト救済機能付き）
     const checkUserStatus = async (user) => {
       if (!user) return true;
 
@@ -69,12 +92,10 @@ function App() {
       isCheckingStatus = true; 
       console.log(`[App.js] 🔄 DB問い合わせ開始: profiles チェック中... (ID: ${user.id})`);
 
-      // 🕒 対策：Supabaseの迷子ハングに巻き込まれないよう、3秒で強制突破するタイムアウトを用意
       const timeoutPromise = new Promise((resolve) => 
         setTimeout(() => resolve({ timeout: true }), 3000)
       );
 
-      // 実際のDB問い合わせ
       const dbPromise = supabase
         .from('profiles')
         .select('is_deleted')
@@ -82,16 +103,14 @@ function App() {
         .maybeSingle();
 
       try {
-        // レース（競争）させて、3秒経ってもDBから返事がなければタイムアウト側が勝つ
         const result = await Promise.race([dbPromise, timeoutPromise]);
 
         if (result && result.timeout) {
           console.warn("[App.js] ⏳ DB問い合わせが3秒間応答しなかったため、安全のためにチェックをスキップしてログインを通します。");
           isCheckingStatus = false;
-          return true; // 固まらせないために救済
+          return true; 
         }
 
-        // 通常通りDBから返事が返ってきた場合
         const { data, error } = result;
         console.log("[App.js] 🟢 DB問い合わせ完了:", { data, error });
 
@@ -104,7 +123,6 @@ function App() {
           console.warn("[App.js] 🚨 退会済みユーザーを検知");
           alert("このアカウントは退会済みです。");
           
-          // 🛡️ 退会処理時はすべてのローカルデータを安全に抹消する
           await supabase.auth.signOut();
           localStorage.removeItem('auth_last_verified');
           sessionStorage.removeItem('session_active');
@@ -120,15 +138,13 @@ function App() {
     };
 
     const initializeAuth = async () => {
-      // 🚀 対策：すでに1回目が処理中なら、ReactのStrict Modeによる2回目の同時実行をここで完全にシャットアウト
       if (isInitializing) {
         console.log("[App.js] ⚠️ initializeAuth: すでに初期化が進行中のため、2回目の実行をスキップします");
         return;
       }
-      isInitializing = true; // 🔒 ロック開始
+      isInitializing = true; 
       console.log("[App.js] 🚀 initializeAuth 処理を開始します");
 
-      // A. 認証維持期間のチェック
       const limitDays = parseInt(localStorage.getItem('auth_session_limit') || '0');
       const lastVerified = localStorage.getItem('auth_last_verified');
       console.log("[App.js] ログイン維持期間の設定状況:", { limitDays, lastVerified });
@@ -152,8 +168,6 @@ function App() {
 
         if (shouldSignOut) {
           console.log("[App.js] 🧹 期限切れのため、Supabaseとローカルストレージをクリアします");
-          
-          // 🚀 対策：これからログアウトするので、直後のonAuthStateChangeによる退会チェックが暴発しないようロック
           isCheckingStatus = true; 
           
           await supabase.auth.signOut();
@@ -162,14 +176,12 @@ function App() {
           hasCheckedNicknameInSession = false;
           setSession(null);
           
-          // 🔓 処理が完了したので両方のロックを解除
           isCheckingStatus = false; 
           isInitializing = false;
           return; 
         }
       }
 
-      // B. 既存のセッション取得ロジック
       console.log("[App.js] 🔍 既存のセッション（自動ログイン）を確認します...");
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       console.log("[App.js] 既存セッション確認結果:", initialSession ? "あり" : "なし");
@@ -178,7 +190,7 @@ function App() {
         const isUserActive = await checkUserStatus(initialSession.user);
         if (!isUserActive) {
           setSession(null);
-          isInitializing = false; // 🔓 途中で抜ける場合もロックを解除
+          isInitializing = false; 
           return; 
         }
       }
@@ -190,16 +202,14 @@ function App() {
         if (!lastVerified) {
           localStorage.setItem('auth_last_verified', Date.now().toString());
         }
-        // 🛡️ 初期検証を通過した安全なセッションでニックネームチェックを実行
         await checkNickname(initialSession.user.id);
       }
       console.log("[App.js] 🎉 initializeAuth が無事に完了しました");
-      isInitializing = false; // 🔓 正常に最後まで完了したのでロックを解除
+      isInitializing = false; 
     };
 
     initializeAuth();
 
-    // C. 状態変化 of 認証の監視
     console.log("[App.js] 🎧 onAuthStateChange の監視リスナーを登録します");
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       console.log(`[App.js] 🔔 認証イベント検知: [${event}]`);
@@ -211,7 +221,6 @@ function App() {
           setSession(null);
           return; 
         }
-        // 🛡️ サインイン直後に最新のアカウント名設定を検証
         await checkNickname(currentSession.user.id);
       }
 
@@ -223,7 +232,7 @@ function App() {
         }
       } else {
         sessionStorage.removeItem('session_active');
-        hasCheckedNicknameInSession = false; // セッション終了時にニックネームチェックフラグをリセット
+        hasCheckedNicknameInSession = false; 
       }
     });
 
@@ -263,15 +272,13 @@ function App() {
     setShowProfile(false);
   };
 
-  // 🛡️ 修正：手動ログアウト時、クライアント側のキャッシュ・セキュリティ情報を完全に抹消
   const handleLogout = async () => {
     console.log("[App.js] 🚪 手動ログアウトがクリックされました");
     try {
       await supabase.auth.signOut();
     } catch (e) {
-      console.error("[App.js] Supabaseログアウト中の例外（無視してクリーンアップします）:", e);
+      console.error("[App.js] Supabaseログアウト中の例外:", e);
     } finally {
-      // セッション情報を完全にパージ
       localStorage.removeItem('auth_last_verified');
       sessionStorage.removeItem('session_active');
       hasCheckedNicknameInSession = false;
@@ -279,12 +286,27 @@ function App() {
     }
   };
 
+  // ==========================================
+  // 画面レンダリング分岐
+  // ==========================================
+
+  // ① スプラッシュ画面表示中
+  if (appPhase === 'splash') {
+    return <SplashScreen />;
+  }
+
+  // ② チュートリアル画面表示中（初回のみ）
+  if (appPhase === 'tutorial') {
+    return <Tutorial onComplete={handleCompleteTutorial} />;
+  }
+
+  // ③ チュートリアル完了後 ➔ ログインなしなら Auth 画面を表示
   if (!session) {
     console.log("[App.js] 🔐 セッションなし: Auth 画面を表示します");
     return <Auth />;
   }
 
-  // --- 6. JSX 部分 ---
+  // ④ ログイン済み ➔ メインアプリ画面を表示
   return (
     <div style={styles.container}>
       <div style={styles.contentWrapper}>
