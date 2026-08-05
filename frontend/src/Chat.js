@@ -828,7 +828,10 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
                               </a>
                             )
                           ) : (
-                            <span>{msg.text}</span>
+                            // <span>{msg.text}</span>
+                            <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                              {msg.text}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -842,9 +845,34 @@ const Chat = ({ session, friendEmail, roomId: propsRoomId, onBack }) => {
               <div style={styles.inputArea}>
                 <label htmlFor="file-upload" style={styles.clipBtn}>📎</label>
                 <input id="file-upload" type="file" style={{ display: 'none' }} onChange={handleFileUpload} />
-                <input id="chat-message" name="message" autoComplete="off" style={styles.chatInput} placeholder="メッセージを入力"
+                {/* <input id="chat-message" name="message" autoComplete="off" style={styles.chatInput} placeholder="メッセージを入力"
                   value={message} onChange={(e) => setMessage(e.target.value)}
                   onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.key === 'Enter') sendMessage(); }}
+                /> */}
+                <textarea
+                  id="chat-message"
+                  name="message"
+                  autoComplete="off"
+                  style={styles.chatInput}
+                  placeholder="メッセージを入力"
+                  rows={1}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onInput={(e) => {
+                    e.target.style.height = 'auto'; // 一旦リセットして正確なscrollHeightを取得
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`; // 120px（約5行分）を上限に設定
+                  }}
+                  onKeyDown={(e) => {
+                    // IME入力中（日本語変換確定のEnter等）は送信しない
+                    if (e.nativeEvent.isComposing) return;
+
+                    // Shiftキーが押されずにEnterキーが押された場合は送信
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault(); // 改行の挿入を防ぐ
+                      sendMessage();
+                      e.target.style.height = 'auto';
+                    }
+                  }}
                 />
                 <button onClick={sendMessage} style={styles.sendBtn}>▲</button>
               </div>
@@ -902,9 +930,11 @@ const styles = {
   
   bubble: { display: 'inline-block', padding: '8px 14px', borderRadius: '18px', maxWidth: '80%', textAlign: 'left' },
   attachedImg: { maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', cursor: 'pointer', display: 'block' },
-  inputArea: { padding: '10px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}`, display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 },
+  // inputArea: { padding: '10px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}`, display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 },
+  inputArea: { display: 'flex', alignItems: 'flex-end', padding: '10px', backgroundColor: '#fff', borderTop: `1px solid ${theme.colors.border}`, gap: '8px' },
   clipBtn: { cursor: 'pointer', padding: '0 5px', fontSize: '1.4rem' },
-  chatInput: { flex: 1, padding: '10px', borderRadius: '20px', border: `1px solid ${theme.colors.border}`, outline: 'none' },
+  // chatInput: { flex: 1, padding: '10px', borderRadius: '20px', border: `1px solid ${theme.colors.border}`, outline: 'none' },
+  chatInput: { flex: 1, padding: '8px 12px', borderRadius: '18px', border: '1px solid #ccc', fontSize: '0.95rem', lineHeight: '1.4', outline: 'none', resize: 'none', minHeight: '20px', maxHeight: '120px', fontFamily: 'inherit', overflowY: 'auto', boxSizing: 'border-box' },
   sendBtn: { backgroundColor: theme.colors.primary, color: '#fff', border: 'none', borderRadius: '50%', width: '40px', height: '40px', cursor: 'pointer' },
   lockedInputArea: { padding: '15px', textAlign: 'center', color: theme.colors.textSub, fontSize: '0.8rem', backgroundColor: '#eee', flexShrink: 0 }
 };
