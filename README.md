@@ -2,7 +2,9 @@
 
 ## 📌 概要
 『Y Talk』は、フロントエンドに **React**、バックエンド（BaaS）に **Supabase** を採用し、完全リアルタイムな双方向コミュニケーションを実現したモダンなチャットアプリケーションです。
-
+![チャット](/frontend/public/images/tutorial-3.png)
+![カレンダー](/frontend/public/images/tutorial-6.png)
+![アルバム](/frontend/public/images/tutorial-7.png)
 ---
 
 ## 🛠️ 主な機能 (Features)
